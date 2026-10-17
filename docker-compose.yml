@@ -1,0 +1,159 @@
+services:
+  # --------------------------------------------------------------------------
+  # 1. PostgreSQL 16 Database
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: fbposter-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fbposter
+      POSTGRES_PASSWORD: fbposter_secret
+      POSTGRES_DB: fb_autoposter
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fbposter -d fb_autoposter"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --------------------------------------------------------------------------
+  # 2. Redis 7 Queue Broker & Rate-Limit Cache
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: fbposter-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --------------------------------------------------------------------------
+  # 3. MinIO (S3-Compatible Object Storage cho Ảnh, Video & Reels)
+  # --------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: fbposter-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  # Tự động khởi tạo bucket `fb-media` khi MinIO vừa bật lên
+  minio-init:
+    image: minio/mc:latest
+    container_name: fbposter-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3;
+      mc alias set local http://minio:9000 minioadmin minioadmin123;
+      mc mb --ignore-existing local/fb-media;
+      mc anonymous set download local/fb-media;
+      exit 0;
+      "
+
+  # --------------------------------------------------------------------------
+  # 4. Golang Database Migrator (Chạy tự động trước khi API & Worker khởi động)
+  # --------------------------------------------------------------------------
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fbposter-migrate
+    command: ["/app/fb-migrate", "up"]
+    environment:
+      DATABASE_URL: postgres://fbposter:fbposter_secret@postgres:5432/fb_autoposter?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # --------------------------------------------------------------------------
+  # 5. Golang Backend API Server & Embedded Admin Dashboard
+  # --------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fbposter-api
+    restart: unless-stopped
+    command: ["/app/fb-api"]
+    ports:
+      - "8080:8080"
+    environment:
+      APP_ENV: production
+      HTTP_PORT: "8080"
+      DATABASE_URL: postgres://fbposter:fbposter_secret@postgres:5432/fb_autoposter?sslmode=disable
+      REDIS_ADDR: redis:6379
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_BASE_URL: http://localhost:9000/fb-media
+      S3_REGION: us-east-1
+      S3_BUCKET: fb-media
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin123
+      FB_GRAPH_VERSION: v20.0
+      FB_APP_ID: ${FB_APP_ID:-}
+      FB_APP_SECRET: ${FB_APP_SECRET:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # --------------------------------------------------------------------------
+  # 6. Golang Background Scheduler, Fast/Heavy Queue Worker & Token Checker
+  # --------------------------------------------------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fbposter-worker
+    restart: unless-stopped
+    command: ["/app/fb-worker"]
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgres://fbposter:fbposter_secret@postgres:5432/fb_autoposter?sslmode=disable
+      REDIS_ADDR: redis:6379
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      SCHEDULER_INTERVAL_SEC: "15"
+      FAST_WORKER_CONCURRENCY: "4"
+      HEAVY_WORKER_CONCURRENCY: "2"
+      RATE_LIMIT_THRESHOLD_PERCENT: "80"
+      FB_GRAPH_VERSION: v20.0
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pg_data:
+  redis_data:
+  minio_data:
