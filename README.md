@@ -102,8 +102,16 @@ Hệ thống được thiết kế **Zero External Dependency Blocker**: ngay c�
    make migrate-up       # Áp dụng các bản migration mới nhất
    make migrate-down     # Rollback 1 phiên bản migration gần nhất
    ```
-4. **Chạy API Server và Worker:**
+4. **Chạy API Server, Worker và Next.js Studio:**
    ```bash
-   make run-api          # Mở http://localhost:8080
-   make run-worker       # Chạy tiến trình Worker & Scheduler ở terminal thứ 2
+   make run-api          # Chạy Backend API Server (Port 8080)
+   make run-worker       # Chạy Background Worker & Scheduler
+   make frontend-dev     # Chạy Next.js Studio UI (Port 3000)
    ```
+
+5. **Truy cập ứng dụng:**
+   * **Next.js Studio UI (Khuyên dùng):** `http://localhost:3000`
+   * **Golang API & Embedded Dashboard:** `http://localhost:8080`
+   * **Healthcheck & Queue Stats:** `http://localhost:8080/healthz`
+   * **MinIO Console (S3 Storage):** `http://localhost:9001`
+

@@ -1,10 +1,13 @@
 package storage
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"path"
 	"strings"
@@ -104,6 +107,39 @@ func (s *S3Service) GeneratePresignedPutURL(fileName string, expiresSeconds int)
 		PublicURL:  publicURL,
 		ExpiresIn:  expiresSeconds,
 	}, nil
+}
+
+// Upload gửi trực tiếp file stream lên S3/MinIO thông qua Presigned PUT URL.
+func (s *S3Service) Upload(ctx context.Context, fileName, contentType string, data io.Reader, size int64) (string, string, error) {
+	presigned, err := s.GeneratePresignedPutURL(fileName, 900)
+	if err != nil {
+		return "", "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, presigned.UploadURL, io.NopCloser(data))
+	if err != nil {
+		return "", "", err
+	}
+	if size > 0 {
+		req.ContentLength = size
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+
+	client := &http.Client{Timeout: 600 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("s3 put failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return "", "", fmt.Errorf("s3 put returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return presigned.PublicURL, presigned.StorageKey, nil
 }
 
 func hmacSHA256(key, data []byte) []byte {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/happy-darwin/fb-autoposter/internal/config"
@@ -83,7 +84,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/posts/{id}/publish-now", s.handlePublishPostNow)
 	mux.HandleFunc("POST /api/v1/posts/{id}/cancel", s.handleCancelPost)
 
-	// 5. Media S3/MinIO Presigned URL, AI Content Generator & Meta Webhook
+	// 5. Media Upload (Direct & Presigned), AI Content Generator & Meta Webhook
+	_ = os.MkdirAll("./uploads", 0755)
+	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
+	mux.HandleFunc("POST /api/v1/media/upload", s.handleMediaUpload)
 	mux.HandleFunc("POST /api/v1/media/presign", s.handlePresignUpload)
 	mux.HandleFunc("POST /api/v1/ai/generate", s.handleAIGenerateContent)
 	mux.HandleFunc("GET /api/v1/webhooks/facebook", s.handleFBWebhookVerify)

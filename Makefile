@@ -31,10 +31,23 @@ run-api:
 run-worker:
 	go run ./cmd/worker
 
-# Khởi động toàn bộ hạ tầng Docker (Postgres, Redis, MinIO, Migrator, API, Worker)
+# Chạy Next.js Studio Frontend ở chế độ dev (Port 3000)
+frontend-dev:
+	cd frontend && npm run dev
+
+# Build production Next.js Studio Frontend
+frontend-build:
+	cd frontend && npm run build
+
+# Chạy production Next.js Studio Frontend (Port 3000)
+frontend-start:
+	cd frontend && npm run start
+
+# Khởi động toàn bộ hạ tầng Docker (Postgres, Redis, MinIO, Migrator, API, Worker, Next.js Frontend)
 docker-up:
 	docker compose up -d --build
 
 # Tắt hạ tầng Docker
 docker-down:
 	docker compose down
+

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -89,5 +90,42 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	handler.ServeHTTP(rec5, req5)
 	if rec5.Code != http.StatusOK {
 		t.Fatalf("expected POST /api/v1/media/presign 200, got %d", rec5.Code)
+	}
+
+	// 6. Test POST /api/v1/media/upload (Direct Video Multipart Upload)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "demo_reel.mp4")
+	if err != nil {
+		t.Fatalf("create form file failed: %v", err)
+	}
+	_, _ = part.Write([]byte("fake video content binary data"))
+	_ = writer.Close()
+
+	req6 := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload", &body)
+	req6.Header.Set("Content-Type", writer.FormDataContentType())
+	rec6 := httptest.NewRecorder()
+	handler.ServeHTTP(rec6, req6)
+	if rec6.Code != http.StatusOK {
+		t.Fatalf("expected POST /api/v1/media/upload 200, got %d: %s", rec6.Code, rec6.Body.String())
+	}
+
+	var uploadResp map[string]any
+	if err := json.Unmarshal(rec6.Body.Bytes(), &uploadResp); err != nil {
+		t.Fatalf("unmarshal upload resp failed: %v", err)
+	}
+	if uploadResp["public_url"] == "" {
+		t.Fatalf("expected non-empty public_url from direct media upload")
+	}
+
+	// 7. Test GET / (Dashboard UI returns HTML)
+	req7 := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec7 := httptest.NewRecorder()
+	handler.ServeHTTP(rec7, req7)
+	if rec7.Code != http.StatusOK {
+		t.Fatalf("expected GET / 200, got %d", rec7.Code)
+	}
+	if !strings.Contains(rec7.Body.String(), "Tải Video hoặc Ảnh trực tiếp") {
+		t.Fatalf("expected dashboard HTML to contain video upload section")
 	}
 }

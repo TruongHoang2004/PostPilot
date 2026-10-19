@@ -42,7 +42,7 @@ services:
   # 3. MinIO (S3-Compatible Object Storage cho Ảnh, Video & Reels)
   # --------------------------------------------------------------------------
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/aistor/minio:latest
     container_name: fbposter-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
@@ -57,7 +57,7 @@ services:
 
   # Tự động khởi tạo bucket `fb-media` khi MinIO vừa bật lên
   minio-init:
-    image: minio/mc:latest
+    image: quay.io/minio/aistor/mc:latest
     container_name: fbposter-minio-init
     depends_on:
       - minio
@@ -153,7 +153,24 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # --------------------------------------------------------------------------
+  # 7. Next.js Modern Web Studio & Control Center (Port 3000)
+  # --------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: fbposter-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8080
+    depends_on:
+      - api
+
 volumes:
   pg_data:
   redis_data:
   minio_data:
+

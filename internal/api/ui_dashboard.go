@@ -122,6 +122,66 @@ const dashboardHTML = `<!DOCTYPE html>
     .status-PUBLISHED, .status-ACTIVE { background: rgba(16,185,129,0.2); color: #34d399; }
     .status-SCHEDULED, .status-QUEUED { background: rgba(245,158,11,0.2); color: #fbbf24; }
     .status-FAILED, .status-EXPIRED { background: rgba(239,68,68,0.2); color: #f87171; }
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 18px 14px;
+      text-align: center;
+      cursor: pointer;
+      background: rgba(15, 23, 42, 0.7);
+      transition: all 0.2s ease;
+    }
+    .upload-zone:hover, .upload-zone.dragover {
+      border-color: var(--primary);
+      background: rgba(59, 130, 246, 0.1);
+    }
+    .progress-track {
+      width: 100%;
+      height: 7px;
+      background: #334155;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #3b82f6, #10b981);
+      transition: width 0.15s ease;
+    }
+    .media-preview-box {
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      max-height: 280px;
+      border: 1px solid var(--border);
+      margin-top: 8px;
+    }
+    .type-switcher {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+      flex-wrap: wrap;
+    }
+    .type-chip {
+      cursor: pointer;
+      padding: 5px 11px;
+      border-radius: 6px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      background: #334155;
+      color: var(--muted);
+      border: 1px solid transparent;
+      transition: all 0.15s ease;
+    }
+    .type-chip.active {
+      background: rgba(59, 130, 246, 0.25);
+      color: #60a5fa;
+      border-color: #3b82f6;
+    }
   </style>
 </head>
 <body>
@@ -182,7 +242,7 @@ const dashboardHTML = `<!DOCTYPE html>
           </div>
           <div class="form-group">
             <label>Loại bài đăng (Media Type)</label>
-            <select id="post-media-type">
+            <select id="post-media-type" onchange="syncMediaTypeChip(this.value)">
               <option value="NONE">Chỉ văn bản (Text Post)</option>
               <option value="LINK">Đính kèm Link Preview (Link Post)</option>
               <option value="IMAGE">1 Ảnh đơn (Single Photo)</option>
@@ -190,10 +250,46 @@ const dashboardHTML = `<!DOCTYPE html>
               <option value="VIDEO">Video thường (Chunked/URL Video)</option>
               <option value="REEL">Facebook Reels (Short Video 9:16)</option>
             </select>
+            <div class="type-switcher">
+              <span class="type-chip active" data-type="NONE" onclick="selectMediaType('NONE')">📝 Văn bản</span>
+              <span class="type-chip" data-type="VIDEO" onclick="selectMediaType('VIDEO')">🎬 Video thường</span>
+              <span class="type-chip" data-type="REEL" onclick="selectMediaType('REEL')">📱 Facebook Reel</span>
+              <span class="type-chip" data-type="IMAGE" onclick="selectMediaType('IMAGE')">🖼 Ảnh</span>
+              <span class="type-chip" data-type="LINK" onclick="selectMediaType('LINK')">🔗 Link</span>
+            </div>
           </div>
           <div class="form-group">
-            <label>Danh sách Media URLs (Mỗi dòng 1 link S3/CDN) hoặc Link đính kèm</label>
-            <input id="post-media-urls" placeholder="https://cdn.example.com/photo1.jpg, https://cdn.example.com/photo2.jpg" />
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <label style="margin-bottom:0;">🎬 Tải Video hoặc Ảnh trực tiếp từ máy tính</label>
+              <span id="upload-status-badge" style="font-size:0.75rem; font-weight:600;"></span>
+            </div>
+            <div id="drop-zone" class="upload-zone" onclick="document.getElementById('file-input').click()">
+              <div id="drop-idle">
+                <div style="font-size: 1.6rem;">📹</div>
+                <div style="font-weight: 600; margin-top: 4px;">Kéo thả Video vào đây hoặc Nhấn để chọn file</div>
+                <div style="font-size: 0.8rem; color: var(--muted); margin-top: 2px;">Hỗ trợ MP4, MOV, WebM (Video / Reels) hoặc JPG, PNG. Tải trực tiếp không cần copy URL</div>
+              </div>
+              <div id="drop-progress" style="display:none;">
+                <div style="font-size:0.85rem; font-weight:600;" id="drop-progress-text">Đang tải lên: 0%</div>
+                <div class="progress-track"><div class="progress-fill" id="drop-progress-bar"></div></div>
+              </div>
+            </div>
+            <input type="file" id="file-input" style="display:none;" accept="video/*,image/*" onchange="onFileSelected(this.files)" />
+          </div>
+          <div id="preview-section" style="display:none; margin-bottom: 12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="font-size:0.82rem; color:var(--muted); font-weight:600;">Xem trước Video / Media:</span>
+              <button type="button" class="secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="clearMediaFile()">✕ Bỏ chọn</button>
+            </div>
+            <div class="media-preview-box">
+              <video id="video-preview" controls playsinline style="max-height: 280px; max-width: 100%; display:none;"></video>
+              <img id="image-preview" style="max-height: 280px; max-width: 100%; display:none;" />
+            </div>
+            <div id="file-info-badge" style="font-size:0.78rem; color:var(--muted); margin-top:4px;"></div>
+          </div>
+          <div class="form-group">
+            <label>Media URLs (Tự động điền sau khi tải video hoặc dán link CDN ngoài)</label>
+            <input id="post-media-urls" placeholder="https://cdn.example.com/video.mp4" />
           </div>
           <div class="form-group">
             <label>Thời gian hẹn đăng (Bỏ trống nếu muốn đăng ngay)</label>
@@ -329,7 +425,159 @@ const dashboardHTML = `<!DOCTYPE html>
       }
     }
 
+    let isUploading = false;
+
+    function selectMediaType(type) {
+      document.getElementById('post-media-type').value = type;
+      syncMediaTypeChip(type);
+    }
+
+    function syncMediaTypeChip(type) {
+      document.querySelectorAll('.type-chip').forEach(el => {
+        el.classList.toggle('active', el.dataset.type === type);
+      });
+    }
+
+    function setupDragAndDrop() {
+      const dropZone = document.getElementById('drop-zone');
+      if (!dropZone) return;
+      ['dragenter', 'dragover'].forEach(name => {
+        dropZone.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropZone.classList.add('dragover');
+        }, false);
+      });
+      ['dragleave', 'drop'].forEach(name => {
+        dropZone.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropZone.classList.remove('dragover');
+        }, false);
+      });
+      dropZone.addEventListener('drop', (e) => {
+        const files = e.dataTransfer.files;
+        if (files && files.length > 0) onFileSelected(files);
+      }, false);
+    }
+
+    function onFileSelected(files) {
+      if (!files || files.length === 0) return;
+      const file = files[0];
+      const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|webm|m4v)$/i.test(file.name);
+      const isImage = file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif)$/i.test(file.name);
+
+      const previewSec = document.getElementById('preview-section');
+      const videoEl = document.getElementById('video-preview');
+      const imgEl = document.getElementById('image-preview');
+      const badge = document.getElementById('file-info-badge');
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+
+      previewSec.style.display = 'block';
+      badge.textContent = '📁 ' + file.name + ' (' + sizeMB + ' MB) • ' + (isVideo ? 'Video' : 'Ảnh');
+
+      const objectURL = URL.createObjectURL(file);
+      if (isVideo) {
+        videoEl.src = objectURL;
+        videoEl.style.display = 'block';
+        imgEl.style.display = 'none';
+        const curType = document.getElementById('post-media-type').value;
+        if (curType !== 'REEL') selectMediaType('VIDEO');
+      } else if (isImage) {
+        imgEl.src = objectURL;
+        imgEl.style.display = 'block';
+        videoEl.pause();
+        videoEl.src = '';
+        videoEl.style.display = 'none';
+        selectMediaType('IMAGE');
+      }
+
+      uploadFile(file);
+    }
+
+    function uploadFile(file) {
+      isUploading = true;
+      const dropIdle = document.getElementById('drop-idle');
+      const dropProgress = document.getElementById('drop-progress');
+      const progressText = document.getElementById('drop-progress-text');
+      const progressBar = document.getElementById('drop-progress-bar');
+      const badge = document.getElementById('upload-status-badge');
+
+      dropIdle.style.display = 'none';
+      dropProgress.style.display = 'block';
+      progressBar.style.width = '0%';
+      progressText.textContent = 'Đang tải lên: 0%';
+      badge.textContent = '⏳ Đang tải lên...';
+      badge.style.color = 'var(--warning)';
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/v1/media/upload', true);
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const percent = Math.round((e.loaded / e.total) * 100);
+          progressBar.style.width = percent + '%';
+          const loadedMB = (e.loaded / (1024 * 1024)).toFixed(1);
+          const totalMB = (e.total / (1024 * 1024)).toFixed(1);
+          progressText.textContent = 'Đang tải lên: ' + percent + '% (' + loadedMB + 'MB / ' + totalMB + 'MB)';
+        }
+      };
+
+      xhr.onload = () => {
+        isUploading = false;
+        dropIdle.style.display = 'block';
+        dropProgress.style.display = 'none';
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const resp = JSON.parse(xhr.responseText);
+            document.getElementById('post-media-urls').value = resp.public_url;
+            badge.textContent = '✅ Đã tải file lên máy chủ thành công!';
+            badge.style.color = 'var(--success)';
+          } catch (err) {
+            alert('Lỗi đọc dữ liệu: ' + err.message);
+          }
+        } else {
+          badge.textContent = '❌ Lỗi tải lên';
+          badge.style.color = 'var(--danger)';
+          alert('Tải file thất bại: ' + xhr.responseText);
+        }
+      };
+
+      xhr.onerror = () => {
+        isUploading = false;
+        dropIdle.style.display = 'block';
+        dropProgress.style.display = 'none';
+        badge.textContent = '❌ Lỗi kết nối';
+        badge.style.color = 'var(--danger)';
+        alert('Lỗi kết nối khi tải file lên!');
+      };
+
+      xhr.send(formData);
+    }
+
+    function clearMediaFile() {
+      document.getElementById('file-input').value = '';
+      document.getElementById('preview-section').style.display = 'none';
+      const videoEl = document.getElementById('video-preview');
+      videoEl.pause();
+      videoEl.src = '';
+      videoEl.style.display = 'none';
+      const imgEl = document.getElementById('image-preview');
+      imgEl.src = '';
+      imgEl.style.display = 'none';
+      document.getElementById('post-media-urls').value = '';
+      document.getElementById('upload-status-badge').textContent = '';
+      selectMediaType('NONE');
+    }
+
     async function createPost(publishNowFlag) {
+      if (isUploading) {
+        return alert('Video đang tải lên, vui lòng đợi hoàn tất trước khi đăng!');
+      }
+
       const page_uuid = document.getElementById('post-page').value;
       const content = document.getElementById('post-content').value;
       const media_type = document.getElementById('post-media-type').value;
@@ -338,6 +586,11 @@ const dashboardHTML = `<!DOCTYPE html>
 
       if (!page_uuid) return alert('Hãy thêm và chọn một Fanpage trước!');
       const urls = rawUrls ? rawUrls.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+      if ((media_type === 'VIDEO' || media_type === 'REEL') && urls.length === 0) {
+        return alert('Vui lòng chọn tải video lên hoặc điền URL video trước khi đăng!');
+      }
+
       const payload = {
         page_uuid,
         content,
@@ -358,6 +611,8 @@ const dashboardHTML = `<!DOCTYPE html>
         return alert('Lỗi: ' + err.error);
       }
       document.getElementById('post-content').value = '';
+      clearMediaFile();
+      alert(publishNowFlag ? '🚀 Đã đẩy bài đăng video vào hàng đợi thành công!' : '📅 Đã lên lịch hẹn đăng video thành công!');
       refreshAll();
     }
 
@@ -366,6 +621,7 @@ const dashboardHTML = `<!DOCTYPE html>
       refreshAll();
     }
 
+    setupDragAndDrop();
     refreshAll();
     setInterval(refreshAll, 5000);
   </script>
