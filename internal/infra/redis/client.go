@@ -224,6 +224,19 @@ func (c *Client) GetPageRateLimit(ctx context.Context, pageID string) (domain.Ra
 	return usage, nil
 }
 
+// DeletePageRateLimit xóa thông số Rate-Limit của Page khỏi Redis khi xóa Page.
+func (c *Client) DeletePageRateLimit(ctx context.Context, pageID string) error {
+	key := RateKeyPrefix + pageID
+	if c.useMemoryFallback {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		delete(c.memKV, key)
+		return nil
+	}
+	_, err := c.execCommand(ctx, 3*time.Second, "DEL", key)
+	return err
+}
+
 // execCommand thực thi lệnh Redis theo chuẩn RESP2 qua TCP socket.
 func (c *Client) execCommand(ctx context.Context, timeout time.Duration, args ...string) (any, error) {
 	dialer := net.Dialer{Timeout: 5 * time.Second}

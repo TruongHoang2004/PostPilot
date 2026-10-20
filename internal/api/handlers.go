@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -70,8 +72,20 @@ func (s *Server) handleFBOAuthLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleFBOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	code := r.URL.Query().Get("code")
+	fbErr := r.URL.Query().Get("error")
+	fbErrDesc := r.URL.Query().Get("error_description")
+
+	targetHost := "http://localhost:3000"
+	if r.Host != "" && strings.Contains(r.Host, "8080") && !strings.Contains(r.Host, "3000") {
+		targetHost = "http://localhost:3000"
+	}
+
+	if fbErr != "" {
+		http.Redirect(w, r, targetHost+"/?oauth=error&message="+url.QueryEscape(fbErrDesc), http.StatusTemporaryRedirect)
+		return
+	}
 	if code == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing oauth code parameter"})
+		http.Redirect(w, r, targetHost+"/?oauth=error&message="+url.QueryEscape("missing oauth code parameter"), http.StatusTemporaryRedirect)
 		return
 	}
 
@@ -79,11 +93,17 @@ func (s *Server) handleFBOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		ctx, s.cfg.FBAppID, s.cfg.FBAppSecret, s.cfg.FBRedirectURI, code,
 	)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "exchange code failed: " + err.Error()})
+		http.Redirect(w, r, targetHost+"/?oauth=error&message="+url.QueryEscape("exchange code failed: "+err.Error()), http.StatusTemporaryRedirect)
 		return
 	}
 
-	s.exchangeAndStoreManagedPages(w, r, shortUserToken)
+	savedPages, err := s.exchangeAndSaveToken(ctx, shortUserToken)
+	if err != nil {
+		http.Redirect(w, r, targetHost+"/?oauth=error&message="+url.QueryEscape(err.Error()), http.StatusTemporaryRedirect)
+		return
+	}
+
+	http.Redirect(w, r, fmt.Sprintf("%s/?oauth=success&count=%d", targetHost, len(savedPages)), http.StatusTemporaryRedirect)
 }
 
 // handleFBExchangeUserToken nhận `short_lived_user_token` (từ Graph API Explorer)
@@ -98,30 +118,33 @@ func (s *Server) handleFBExchangeUserToken(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	s.exchangeAndStoreManagedPages(w, r, strings.TrimSpace(body.ShortLivedUserToken))
+	savedPages, err := s.exchangeAndSaveToken(r.Context(), strings.TrimSpace(body.ShortLivedUserToken))
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":        "Đã đồng bộ và mã hóa Permanent Page Access Token thành công",
+		"imported_count": len(savedPages),
+		"pages":          savedPages,
+	})
 }
 
-func (s *Server) exchangeAndStoreManagedPages(w http.ResponseWriter, r *http.Request, shortUserToken string) {
-	ctx := r.Context()
+func (s *Server) exchangeAndSaveToken(ctx context.Context, shortUserToken string) ([]*domain.FacebookPage, error) {
 	longUserToken := shortUserToken
 
 	if s.cfg.FBAppID != "" && s.cfg.FBAppSecret != "" && s.cfg.FBAppID != "your_facebook_app_id" {
 		exchanged, err := s.fbClient.ExchangeShortToLongLivedUserToken(ctx, s.cfg.FBAppID, s.cfg.FBAppSecret, shortUserToken)
 		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{
-				"error": "exchange short-to-long-lived token failed: " + err.Error(),
-			})
-			return
+			return nil, fmt.Errorf("exchange short-to-long-lived token: %w", err)
 		}
 		longUserToken = exchanged
 	}
 
 	managedPages, err := s.fbClient.FetchManagedPages(ctx, longUserToken)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"error": "fetch /me/accounts failed: " + err.Error(),
-		})
-		return
+		return nil, fmt.Errorf("fetch /me/accounts: %w", err)
 	}
 
 	var savedPages []*domain.FacebookPage
@@ -143,12 +166,7 @@ func (s *Server) exchangeAndStoreManagedPages(w http.ResponseWriter, r *http.Req
 			savedPages = append(savedPages, saved)
 		}
 	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"message":        "Đã đồng bộ và mã hóa Permanent Page Access Token thành công",
-		"imported_count": len(savedPages),
-		"pages":          savedPages,
-	})
+	return savedPages, nil
 }
 
 // ============================================================================
@@ -202,7 +220,22 @@ func (s *Server) handleUpsertPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	encryptedToken, err := s.cipher.Encrypt(req.AccessToken)
+	// Nếu người dùng vô tình dán User Access Token thay vì Page Access Token,
+	// tự động gọi /me/accounts để trích xuất đúng Page Access Token của Fanpage đó.
+	finalToken := req.AccessToken
+	if managedPages, err := s.fbClient.FetchManagedPages(r.Context(), req.AccessToken); err == nil && len(managedPages) > 0 {
+		for _, mp := range managedPages {
+			if mp.PageID == req.PageID && mp.AccessToken != "" {
+				finalToken = mp.AccessToken
+				if req.Category == "" && mp.Category != "" {
+					req.Category = mp.Category
+				}
+				break
+			}
+		}
+	}
+
+	encryptedToken, err := s.cipher.Encrypt(finalToken)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encrypt token failed: " + err.Error()})
 		return
@@ -221,7 +254,7 @@ func (s *Server) handleUpsertPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page.MaskedToken = crypto.MaskToken(req.AccessToken)
+	page.MaskedToken = crypto.MaskToken(finalToken)
 	writeJSON(w, http.StatusCreated, page)
 }
 
@@ -264,6 +297,35 @@ func (s *Server) handleVerifyPageToken(w http.ResponseWriter, r *http.Request) {
 		"token_status": domain.TokenStatusActive,
 		"is_valid":     true,
 		"debug_info":   debugInfo,
+	})
+}
+
+func (s *Server) handleDeletePage(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	pageUUID := r.PathValue("id")
+
+	// Lấy thông tin page để dọn dẹp cache rate limit nếu có
+	page, err := s.store.GetPageByUUID(ctx, pageUUID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "Không tìm thấy Fanpage cần xóa"})
+		return
+	}
+
+	if err := s.store.DeletePage(ctx, pageUUID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Xóa Fanpage thất bại: " + err.Error()})
+		return
+	}
+
+	// Xóa cache Rate Limit trong Redis
+	if page.PageID != "" {
+		_ = s.redis.DeletePageRateLimit(ctx, page.PageID)
+	}
+
+	s.logger.Info("Fanpage deleted successfully", "page_uuid", pageUUID, "page_name", page.PageName)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":   "Đã xóa Fanpage thành công",
+		"page_uuid": pageUUID,
 	})
 }
 
@@ -466,47 +528,43 @@ func (s *Server) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 		mimeType = "application/octet-stream"
 	}
 
-	var publicURL, storageKey string
+	// 1. Luôn lưu bản sao file vào thư mục local ./uploads trước tiên để tránh lỗi đóng stream
+	// và hỗ trợ upload nhị phân trực tiếp (Chunked Binary Upload) lên Meta Graph API khi chạy ở localhost.
+	uploadDir := "./uploads"
+	_ = os.MkdirAll(uploadDir, 0755)
+	cleanName := fmt.Sprintf("%d_%s", time.Now().UnixMilli(), filepath.Base(strings.ReplaceAll(header.Filename, " ", "_")))
+	localPath := filepath.Join(uploadDir, cleanName)
 
-	// 1. Thử upload trực tiếp lên S3/MinIO nếu đã cấu hình
-	if s.s3 != nil && s.s3.Endpoint != "" {
-		pub, key, err := s.s3.Upload(r.Context(), header.Filename, mimeType, file, header.Size)
-		if err == nil {
-			publicURL = pub
-			storageKey = key
-		} else {
-			s.logger.Warn("S3 upload failed, falling back to local storage", "error", err)
-		}
+	dst, err := os.Create(localPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "cannot save file locally: " + err.Error()})
+		return
+	}
+	writtenBytes, copyErr := io.Copy(dst, file)
+	_ = dst.Close()
+	if copyErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "cannot copy file: " + copyErr.Error()})
+		return
 	}
 
-	// 2. Dự phòng: lưu file vào thư mục local ./uploads và phục vụ qua HTTP server
-	if publicURL == "" {
-		uploadDir := "./uploads"
-		_ = os.MkdirAll(uploadDir, 0755)
-		cleanName := fmt.Sprintf("%d_%s", time.Now().UnixMilli(), filepath.Base(strings.ReplaceAll(header.Filename, " ", "_")))
-		localPath := filepath.Join(uploadDir, cleanName)
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	publicURL := fmt.Sprintf("%s://%s/uploads/%s", scheme, r.Host, cleanName)
+	storageKey := "uploads/" + cleanName
 
-		dst, err := os.Create(localPath)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "cannot save file locally: " + err.Error()})
-			return
+	// 2. Nếu có cấu hình S3/CDN công khai (không phải localhost), đồng bộ thêm lên S3
+	if s.s3 != nil && s.s3.Endpoint != "" && !strings.Contains(s.s3.PublicBaseURL, "localhost") && !strings.Contains(s.s3.PublicBaseURL, "127.0.0.1") {
+		if localFile, openErr := os.Open(localPath); openErr == nil {
+			if pub, key, s3Err := s.s3.Upload(r.Context(), header.Filename, mimeType, localFile, writtenBytes); s3Err == nil {
+				publicURL = pub
+				storageKey = key
+			} else {
+				s.logger.Warn("S3 upload failed, using local storage URL", "error", s3Err)
+			}
+			_ = localFile.Close()
 		}
-		defer dst.Close()
-
-		if seeker, ok := file.(io.Seeker); ok {
-			_, _ = seeker.Seek(0, io.SeekStart)
-		}
-		if _, err := io.Copy(dst, file); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "cannot copy file: " + err.Error()})
-			return
-		}
-
-		scheme := "http"
-		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-			scheme = "https"
-		}
-		publicURL = fmt.Sprintf("%s://%s/uploads/%s", scheme, r.Host, cleanName)
-		storageKey = "uploads/" + cleanName
 	}
 
 	asset, _ := s.store.CreateMediaAsset(r.Context(), &domain.MediaAsset{
@@ -514,7 +572,7 @@ func (s *Server) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 		StorageKey:    storageKey,
 		PublicURL:     publicURL,
 		MimeType:      mimeType,
-		FileSizeBytes: header.Size,
+		FileSizeBytes: writtenBytes,
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -522,7 +580,7 @@ func (s *Server) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 		"public_url":  publicURL,
 		"storage_key": storageKey,
 		"file_name":   header.Filename,
-		"file_size":   header.Size,
+		"file_size":   writtenBytes,
 		"mime_type":   mimeType,
 		"media_asset": asset,
 	})

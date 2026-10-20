@@ -75,6 +75,7 @@ func (s *Server) Handler() http.Handler {
 	// 3. Quản lý Fanpage & Sức khỏe Token
 	mux.HandleFunc("GET /api/v1/pages", s.handleListPages)
 	mux.HandleFunc("POST /api/v1/pages", s.handleUpsertPage)
+	mux.HandleFunc("DELETE /api/v1/pages/{id}", s.handleDeletePage)
 	mux.HandleFunc("POST /api/v1/pages/{id}/verify-token", s.handleVerifyPageToken)
 
 	// 4. Quản lý Bài viết, Lên lịch & Đăng ngay (Publish Now)

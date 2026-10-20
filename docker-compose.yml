@@ -122,6 +122,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    volumes:
+      - uploads_data:/app/uploads
 
   # --------------------------------------------------------------------------
   # 6. Golang Background Scheduler, Fast/Heavy Queue Worker & Token Checker
@@ -152,6 +154,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+    volumes:
+      - uploads_data:/app/uploads
 
   # --------------------------------------------------------------------------
   # 7. Next.js Modern Web Studio & Control Center (Port 3000)
@@ -160,12 +164,15 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        BACKEND_URL: http://api:8080
     container_name: fbposter-frontend
     restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://api:8080
+      BACKEND_URL: http://api:8080
+      NEXT_PUBLIC_API_URL: ""
     depends_on:
       - api
 
@@ -173,4 +180,5 @@ volumes:
   pg_data:
   redis_data:
   minio_data:
+  uploads_data:
 

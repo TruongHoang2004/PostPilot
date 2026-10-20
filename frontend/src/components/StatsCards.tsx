@@ -69,10 +69,10 @@ export function StatsCards({ stats }: StatsCardsProps) {
         return (
           <div
             key={idx}
-            className={`relative overflow-hidden rounded-xl bg-gradient-to-br ${card.color} border ${card.borderColor} p-4 backdrop-blur-sm transition-all hover:translate-y-[-2px] hover:shadow-lg`}
+            className={`relative overflow-hidden rounded-xl bg-white/70 dark:bg-transparent bg-gradient-to-br ${card.color} border ${card.borderColor} p-4 backdrop-blur-sm transition-all hover:translate-y-[-2px] hover:shadow-lg shadow-sm`}
           >
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-slate-400 line-clamp-1">{card.title}</span>
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 line-clamp-1">{card.title}</span>
               <div className={`p-1.5 rounded-lg ${card.iconBg}`}>
                 <Icon className="h-4 w-4" />
               </div>
@@ -80,7 +80,7 @@ export function StatsCards({ stats }: StatsCardsProps) {
             <div className={`text-2xl sm:text-3xl font-extrabold tracking-tight ${card.textColor}`}>
               {card.value}
             </div>
-            <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">{card.subtext}</p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-500 mt-1 line-clamp-1">{card.subtext}</p>
           </div>
         );
       })}

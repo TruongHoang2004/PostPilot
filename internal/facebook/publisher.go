@@ -5,11 +5,80 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/happy-darwin/fb-autoposter/internal/domain"
 )
+
+func isLocalOrInternalURL(u string) bool {
+	lower := strings.ToLower(u)
+	return strings.Contains(lower, "localhost") ||
+		strings.Contains(lower, "127.0.0.1") ||
+		strings.Contains(lower, "minio:") ||
+		strings.Contains(lower, "api:") ||
+		strings.Contains(lower, "/uploads/")
+}
+
+// resolveLocalMediaBytes kiểm tra xem mediaURL có trỏ tới file trong ./uploads/ hoặc dịch vụ nội bộ (api/minio/localhost) hay không.
+// Nếu có, đọc trực tiếp dữ liệu nhị phân để đẩy thẳng lên Meta Graph API (Chunked/Multipart)
+// thay vì gửi link localhost (do máy chủ Meta trên Internet không thể tải file từ localhost của người dùng).
+func resolveLocalMediaBytes(mediaURL string) ([]byte, string) {
+	fileName := filepath.Base(mediaURL)
+	if qIdx := strings.Index(fileName, "?"); qIdx != -1 {
+		fileName = fileName[:qIdx]
+	}
+	if fileName == "" || fileName == "." || fileName == "/" {
+		fileName = "media.mp4"
+	}
+
+	// 1. Đọc trực tiếp từ ổ đĩa ./uploads/<fileName> nếu có
+	if idx := strings.Index(mediaURL, "/uploads/"); idx != -1 {
+		relName := mediaURL[idx+len("/uploads/"):]
+		if qIdx := strings.Index(relName, "?"); qIdx != -1 {
+			relName = relName[:qIdx]
+		}
+		baseName := filepath.Base(relName)
+		localPath := filepath.Join("./uploads", baseName)
+		if data, err := os.ReadFile(localPath); err == nil && len(data) > 0 {
+			return data, baseName
+		}
+	}
+
+	// 2. Nếu là URL nội bộ (localhost / 127.0.0.1 / minio / api), tải qua HTTP nội bộ giữa các container
+	if isLocalOrInternalURL(mediaURL) && (strings.HasPrefix(mediaURL, "http://") || strings.HasPrefix(mediaURL, "https://")) {
+		candidates := []string{mediaURL}
+		if strings.Contains(mediaURL, "localhost:8080") || strings.Contains(mediaURL, "127.0.0.1:8080") {
+			r1 := strings.ReplaceAll(strings.ReplaceAll(mediaURL, "localhost:8080", "api:8080"), "127.0.0.1:8080", "api:8080")
+			candidates = append([]string{r1}, candidates...)
+		}
+		if strings.Contains(mediaURL, "localhost:9000") || strings.Contains(mediaURL, "127.0.0.1:9000") {
+			r2 := strings.ReplaceAll(strings.ReplaceAll(mediaURL, "localhost:9000", "minio:9000"), "127.0.0.1:9000", "minio:9000")
+			candidates = append([]string{r2}, candidates...)
+		}
+		hc := &http.Client{Timeout: 60 * time.Second}
+		for _, cand := range candidates {
+			resp, err := hc.Get(cand)
+			if err == nil && resp.StatusCode == http.StatusOK {
+				data, readErr := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				if readErr == nil && len(data) > 0 {
+					return data, fileName
+				}
+			} else if resp != nil {
+				_ = resp.Body.Close()
+			}
+		}
+	}
+
+	return nil, ""
+}
 
 // PublishOutcome chứa kết quả sau khi thực thi đăng bài lên Facebook Fanpage.
 type PublishOutcome struct {
@@ -30,7 +99,7 @@ type StepExecutionLog struct {
 // - NONE / LINK  -> POST /{page_id}/feed
 // - IMAGE        -> POST /{page_id}/photos
 // - ALBUM        -> Upload từng ảnh `published=false` + POST /{page_id}/feed `attached_media`
-// - VIDEO        -> POST /{page_id}/videos (hoặc Chunked Upload nếu truyền binary)
+// - VIDEO        -> POST /{page_id}/videos (tự động dùng Chunked Binary Upload nếu là file local)
 // - REEL         -> Luồng 3 bước chuẩn Facebook Reels (`/{page_id}/video_reels`)
 func (c *Client) PublishPost(ctx context.Context, fbPageID, pageAccessToken string, post *domain.Post) (*PublishOutcome, error) {
 	switch post.MediaType {
@@ -40,12 +109,21 @@ func (c *Client) PublishPost(ctx context.Context, fbPageID, pageAccessToken stri
 		if len(post.MediaURLs) == 0 {
 			return nil, errors.New("IMAGE post requires at least 1 url in media_urls")
 		}
+		if imgBytes, fileName := resolveLocalMediaBytes(post.MediaURLs[0]); len(imgBytes) > 0 {
+			return c.PublishSinglePhotoBytes(ctx, fbPageID, pageAccessToken, post.Content, fileName, imgBytes)
+		}
+		if isLocalOrInternalURL(post.MediaURLs[0]) {
+			return nil, fmt.Errorf("không tìm thấy file ảnh local (%s); vui lòng tải lại file lên từ giao diện", post.MediaURLs[0])
+		}
 		return c.PublishSinglePhoto(ctx, fbPageID, pageAccessToken, post.Content, post.MediaURLs[0])
 	case domain.MediaTypeAlbum:
 		if len(post.MediaURLs) == 0 {
 			return nil, errors.New("ALBUM post requires media_urls")
 		}
 		if len(post.MediaURLs) == 1 {
+			if imgBytes, fileName := resolveLocalMediaBytes(post.MediaURLs[0]); len(imgBytes) > 0 {
+				return c.PublishSinglePhotoBytes(ctx, fbPageID, pageAccessToken, post.Content, fileName, imgBytes)
+			}
 			return c.PublishSinglePhoto(ctx, fbPageID, pageAccessToken, post.Content, post.MediaURLs[0])
 		}
 		return c.PublishPhotoAlbum(ctx, fbPageID, pageAccessToken, post.Content, post.MediaURLs)
@@ -53,10 +131,22 @@ func (c *Client) PublishPost(ctx context.Context, fbPageID, pageAccessToken stri
 		if len(post.MediaURLs) == 0 {
 			return nil, errors.New("VIDEO post requires video url in media_urls")
 		}
+		if videoBytes, _ := resolveLocalMediaBytes(post.MediaURLs[0]); len(videoBytes) > 0 {
+			return c.PublishVideoChunked(ctx, fbPageID, pageAccessToken, post.Content, videoBytes, 4*1024*1024)
+		}
+		if isLocalOrInternalURL(post.MediaURLs[0]) {
+			return nil, fmt.Errorf("không tìm thấy file video local (%s); vui lòng chọn tải lại video từ máy tính", post.MediaURLs[0])
+		}
 		return c.PublishVideoByURL(ctx, fbPageID, pageAccessToken, post.Content, post.MediaURLs[0])
 	case domain.MediaTypeReel:
 		if len(post.MediaURLs) == 0 {
 			return nil, errors.New("REEL post requires video url in media_urls")
+		}
+		if videoBytes, _ := resolveLocalMediaBytes(post.MediaURLs[0]); len(videoBytes) > 0 {
+			return c.PublishVideoChunked(ctx, fbPageID, pageAccessToken, post.Content, videoBytes, 4*1024*1024)
+		}
+		if isLocalOrInternalURL(post.MediaURLs[0]) {
+			return nil, fmt.Errorf("không tìm thấy file video local (%s); vui lòng chọn tải lại video từ máy tính", post.MediaURLs[0])
 		}
 		return c.PublishReelByURL(ctx, fbPageID, pageAccessToken, post.Content, post.MediaURLs[0])
 	default:
@@ -125,6 +215,33 @@ func (c *Client) PublishSinglePhoto(ctx context.Context, pageID, token, caption,
 	return outcome, nil
 }
 
+// PublishSinglePhotoBytes đăng 1 ảnh từ dữ liệu nhị phân local qua `POST /{page_id}/photos` (multipart).
+func (c *Client) PublishSinglePhotoBytes(ctx context.Context, pageID, token, caption, fileName string, imageBytes []byte) (*PublishOutcome, error) {
+	path := fmt.Sprintf("%s/photos", pageID)
+	fields := map[string]string{
+		"caption":      caption,
+		"published":    "true",
+		"access_token": token,
+	}
+	res, metrics, err := c.PostMultipartChunk(ctx, path, fields, "source", fileName, imageBytes)
+	outcome := &PublishOutcome{
+		FinalRateLimit: metrics.RateLimitUsage,
+		Steps: []StepExecutionLog{
+			{
+				Action:         "PUBLISH_SINGLE_PHOTO_BINARY",
+				RequestSummary: fmt.Sprintf("POST /%s/photos file=%s size=%d", pageID, fileName, len(imageBytes)),
+				Metrics:        metrics,
+				Error:          err,
+			},
+		},
+	}
+	if err != nil {
+		return outcome, err
+	}
+	outcome.FBPostID = extractFBID(res)
+	return outcome, nil
+}
+
 // PublishPhotoAlbum đăng nhiều ảnh vào chung 1 bài viết (Multi-Photo Post):
 // Bước 1: Upload từng ảnh với `published=false` để lấy `media_fbid`.
 // Bước 2: Gọi `POST /{page_id}/feed` với mảng `attached_media=[{"media_fbid":"..."}]`.
@@ -134,12 +251,23 @@ func (c *Client) PublishPhotoAlbum(ctx context.Context, pageID, token, message s
 
 	photoPath := fmt.Sprintf("%s/photos", pageID)
 	for idx, imgURL := range imageURLs {
-		form := url.Values{}
-		form.Set("url", imgURL)
-		form.Set("published", "false")
-		form.Set("access_token", token)
+		var res map[string]any
+		var metrics CallMetrics
+		var err error
 
-		res, metrics, err := c.PostForm(ctx, photoPath, form)
+		if imgBytes, fileName := resolveLocalMediaBytes(imgURL); len(imgBytes) > 0 {
+			fields := map[string]string{
+				"published":    "false",
+				"access_token": token,
+			}
+			res, metrics, err = c.PostMultipartChunk(ctx, photoPath, fields, "source", fileName, imgBytes)
+		} else {
+			form := url.Values{}
+			form.Set("url", imgURL)
+			form.Set("published", "false")
+			form.Set("access_token", token)
+			res, metrics, err = c.PostForm(ctx, photoPath, form)
+		}
 		outcome.FinalRateLimit = metrics.RateLimitUsage
 		outcome.Steps = append(outcome.Steps, StepExecutionLog{
 			Action:         fmt.Sprintf("UPLOAD_ALBUM_PHOTO_%d", idx+1),
@@ -245,12 +373,16 @@ func (c *Client) PublishVideoChunked(ctx context.Context, pageID, token, descrip
 		return outcome, errors.New("missing upload_session_id in video start phase")
 	}
 
-	// Pha 2: Transfer từng chunk
+	// Pha 2: Transfer từng chunk (tôn trọng start_offset & end_offset do Meta trả về nếu có)
 	totalSize := len(videoBytes)
-	offset := 0
+	offset := parseOffset(startRes["start_offset"], 0)
+	nextEnd := parseOffset(startRes["end_offset"], 0)
 	chunkIndex := 1
 	for offset < totalSize {
 		end := offset + chunkSize
+		if nextEnd > offset {
+			end = nextEnd
+		}
 		if end > totalSize {
 			end = totalSize
 		}
@@ -262,7 +394,7 @@ func (c *Client) PublishVideoChunked(ctx context.Context, pageID, token, descrip
 			"start_offset":      strconv.Itoa(offset),
 			"access_token":      token,
 		}
-		_, transferMetrics, err := c.PostMultipartChunk(ctx, videoPath, fields, "video_file_chunk", "chunk.mp4", chunk)
+		transferRes, transferMetrics, err := c.PostMultipartChunk(ctx, videoPath, fields, "video_file_chunk", "chunk.mp4", chunk)
 		outcome.FinalRateLimit = transferMetrics.RateLimitUsage
 		outcome.Steps = append(outcome.Steps, StepExecutionLog{
 			Action:         fmt.Sprintf("CHUNK_VIDEO_TRANSFER_%d", chunkIndex),
@@ -273,7 +405,15 @@ func (c *Client) PublishVideoChunked(ctx context.Context, pageID, token, descrip
 		if err != nil {
 			return outcome, err
 		}
-		offset = end
+		newStart := parseOffset(transferRes["start_offset"], -1)
+		newEnd := parseOffset(transferRes["end_offset"], -1)
+		if newStart >= 0 && newEnd >= newStart && (newStart > offset || newStart == totalSize) {
+			offset = newStart
+			nextEnd = newEnd
+		} else {
+			offset = end
+			nextEnd = 0
+		}
 		chunkIndex++
 	}
 
@@ -282,6 +422,8 @@ func (c *Client) PublishVideoChunked(ctx context.Context, pageID, token, descrip
 	finishForm.Set("upload_phase", "finish")
 	finishForm.Set("upload_session_id", sessionID)
 	finishForm.Set("description", description)
+	finishForm.Set("published", "true")
+	finishForm.Set("video_state", "PUBLISHED")
 	finishForm.Set("access_token", token)
 
 	finishRes, finishMetrics, err := c.PostForm(ctx, videoPath, finishForm)
@@ -301,6 +443,20 @@ func (c *Client) PublishVideoChunked(ctx context.Context, pageID, token, descrip
 		outcome.FBPostID = videoID
 	}
 	return outcome, nil
+}
+
+func parseOffset(val any, fallback int) int {
+	switch v := val.(type) {
+	case string:
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return fallback
 }
 
 // PublishReelByURL thực hiện quy trình 3 bước đăng Facebook Reels qua `/{page_id}/video_reels`:

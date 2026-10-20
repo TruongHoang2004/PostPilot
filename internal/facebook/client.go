@@ -42,7 +42,7 @@ func NewClient(baseURL, version string) *Client {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		version: version,
 		httpClient: &http.Client{
-			Timeout: 90 * time.Second,
+			Timeout: 300 * time.Second,
 		},
 	}
 }
@@ -57,7 +57,13 @@ func (c *Client) WithHTTPClient(hc *http.Client) *Client {
 
 func (c *Client) endpoint(path string) string {
 	path = strings.TrimLeft(path, "/")
-	return fmt.Sprintf("%s/%s/%s", c.baseURL, c.version, path)
+	base := c.baseURL
+	// Theo chuẩn Meta Graph API, các endpoint upload video (/{page_id}/videos)
+	// bắt buộc phải gửi qua miền graph-video.facebook.com thay vì graph.facebook.com.
+	if base == "https://graph.facebook.com" && strings.HasSuffix(path, "/videos") {
+		base = "https://graph-video.facebook.com"
+	}
+	return fmt.Sprintf("%s/%s/%s", base, c.version, path)
 }
 
 // PostForm gửi request POST dạng application/x-www-form-urlencoded tới Meta Graph API.

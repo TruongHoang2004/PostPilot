@@ -21,6 +21,7 @@ type Store interface {
 	UpsertPage(ctx context.Context, page *domain.FacebookPage) (*domain.FacebookPage, error)
 	ListPages(ctx context.Context) ([]domain.FacebookPage, error)
 	GetPageByUUID(ctx context.Context, uuid string) (*domain.FacebookPage, error)
+	DeletePage(ctx context.Context, uuid string) error
 	UpdatePageTokenStatus(ctx context.Context, uuid string, status string, checkedAt time.Time) error
 	UpdatePageRateLimit(ctx context.Context, uuid string, usage domain.RateLimitUsage) error
 
@@ -142,6 +143,18 @@ func (s *PostgresStore) GetPageByUUID(ctx context.Context, uuid string) (*domain
 	p.CreatedAt = parsePGTime(createdStr)
 	p.UpdatedAt = parsePGTime(updatedStr)
 	return &p, nil
+}
+
+func (s *PostgresStore) DeletePage(ctx context.Context, uuid string) error {
+	res, err := s.db.ExecContext(ctx, "DELETE FROM facebook_pages WHERE id = $1", uuid)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
+		return errors.New("page not found")
+	}
+	return nil
 }
 
 func (s *PostgresStore) UpdatePageTokenStatus(ctx context.Context, uuid string, status string, checkedAt time.Time) error {
@@ -559,6 +572,24 @@ func (m *InMemoryStore) GetPageByUUID(ctx context.Context, uuid string) (*domain
 	}
 	cp := *p
 	return &cp, nil
+}
+
+func (m *InMemoryStore) DeletePage(ctx context.Context, uuid string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.pages[uuid]; !ok {
+		return errors.New("page not found")
+	}
+	delete(m.pages, uuid)
+
+	// Xóa các posts liên quan thuộc page_uuid này
+	for postID, post := range m.posts {
+		if post.PageUUID == uuid {
+			delete(m.posts, postID)
+		}
+	}
+	return nil
 }
 
 func (m *InMemoryStore) UpdatePageTokenStatus(ctx context.Context, uuid string, status string, checkedAt time.Time) error {

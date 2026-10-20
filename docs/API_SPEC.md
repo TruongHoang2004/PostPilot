@@ -57,6 +57,12 @@ Kiểm tra tức thời xem Token của Fanpage (theo UUID) còn sống trên Me
 curl -X POST http://localhost:8080/api/v1/pages/<PAGE_UUID>/verify-token
 ```
 
+### `DELETE /api/v1/pages/{id}`
+Ngắt kết nối và xóa vĩnh viễn Fanpage khỏi hệ thống, tự động xóa sạch các bài viết, lịch hẹn liên quan và dọn dẹp bộ nhớ đệm Rate Limit trong Redis.
+```bash
+curl -X DELETE http://localhost:8080/api/v1/pages/<PAGE_UUID>
+```
+
 ---
 
 ## 3. Tạo Bài Viết, Lên Lịch Hẹn & Đăng Ngay

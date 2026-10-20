@@ -1,6 +1,18 @@
-# 🚀 Hệ thống Đăng Bài Tự Động Facebook (Golang + Docker Infrastructure)
+<p align="center">
+  <img src="docs/logo-dark.jpg" alt="PostPilot Logo (Dark Mode)" width="150" style="border-radius: 26px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); margin: 8px;" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/logo-light.jpg" alt="PostPilot Logo (Light Mode)" width="150" style="border-radius: 26px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); margin: 8px;" />
+</p>
 
-Hệ thống **Facebook Auto-Poster** chuẩn Production được xây dựng hoàn toàn bằng **Golang (Go 1.26)** và đóng gói hạ tầng bằng **Docker Compose**. Hệ thống giao tiếp chính thống với **Meta Graph API v20.0**, hỗ trợ quản lý đa Fanpage, mã hóa Token chuẩn **AES-256-GCM**, phân tầng hàng đợi **Redis Queue (`FAST` / `HEAVY`)**, tự động điều tiết **Rate Limit**, và tích hợp **AI (Google Gemini)** để sáng tạo nội dung tự động.
+<h1 align="center">✈️ PostPilot - Hệ Thống Đăng Bài Tự Động Facebook</h1>
+
+<p align="center">
+  <b>Hạ tầng Go 1.26 + Redis Queue + Docker Compose + AI Content Studio</b>
+</p>
+
+---
+
+Hệ thống **PostPilot** chuẩn Production được xây dựng hoàn toàn bằng **Golang (Go 1.26)** và đóng gói hạ tầng bằng **Docker Compose**. Hệ thống giao tiếp chính thống với **Meta Graph API v20.0**, hỗ trợ quản lý đa Fanpage, mã hóa Token chuẩn **AES-256-GCM**, phân tầng hàng đợi **Redis Queue (`FAST` / `HEAVY`)**, tự động điều tiết **Rate Limit**, và tích hợp **AI (Google Gemini)** để sáng tạo nội dung tự động.
 
 ---
 

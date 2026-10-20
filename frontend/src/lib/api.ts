@@ -59,6 +59,13 @@ export const api = {
     return handleResponse<FacebookPage>(res);
   },
 
+  async deletePage(pageUUID: string): Promise<{ message: string; page_uuid: string }> {
+    const res = await fetch(`${API_BASE}/api/v1/pages/${pageUUID}`, {
+      method: "DELETE",
+    });
+    return handleResponse<{ message: string; page_uuid: string }>(res);
+  },
+
   async verifyPageToken(pageUUID: string): Promise<VerifyTokenResponse> {
     const res = await fetch(`${API_BASE}/api/v1/pages/${pageUUID}/verify-token`, {
       method: "POST",

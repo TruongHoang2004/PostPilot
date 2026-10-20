@@ -1,0 +1,27 @@
+# Git and GitHub
+.git
+.github
+.gitignore
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Documentation & Design assets
+docs/
+*.md
+.DS_Store
+
+# Go binary and temporary build outputs
+bin/
+api
+/out
+
+# Frontend source (Frontend có Dockerfile riêng trong ./frontend)
+frontend/
+
+# Local logs and databases
+*.log
+*.sqlite
+data/

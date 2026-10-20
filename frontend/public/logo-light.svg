@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" className="w-full h-full">
+  <defs>
+    <!-- Light Mode Background Gradient -->
+    <radialGradient id="ppLightBg" cx="50%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="70%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#f1f5f9"/>
+    </radialGradient>
+
+    <!-- Vibrant Gradient for Light Mode -->
+    <linearGradient id="ppLightPrimary" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7"/>
+      <stop offset="45%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+
+    <!-- Accent Wing Gradient -->
+    <linearGradient id="ppLightAccent" x1="10%" y1="0%" x2="90%" y2="100%">
+      <stop offset="0%" stop-color="#0891b2"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+
+    <!-- Aerodynamic Glint Highlight -->
+    <linearGradient id="ppLightGlint" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#bfdbfe" stop-opacity="0.3"/>
+    </linearGradient>
+
+    <!-- Subtle Trail Ring for Light Mode -->
+    <linearGradient id="ppLightTrail" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#0284c7" stop-opacity="0.1"/>
+      <stop offset="50%" stop-color="#3b82f6" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.45"/>
+    </linearGradient>
+
+    <!-- Soft Ambient Drop Shadow for Light BG -->
+    <filter id="ppLightShadow" x="-15%" y="-15%" width="130%" height="135%">
+      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#1e3a8a" flood-opacity="0.18"/>
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#1e3a8a" flood-opacity="0.1"/>
+    </filter>
+  </defs>
+
+  <!-- Container / Squircle Badge Base -->
+  <rect width="512" height="512" rx="128" fill="url(#ppLightBg)"/>
+  <rect width="508" height="508" x="2" y="2" rx="126" stroke="#e2e8f0" stroke-width="2.5"/>
+
+  <!-- Dynamic Flight Orbit Track -->
+  <circle cx="256" cy="256" r="170" stroke="url(#ppLightTrail)" stroke-width="3" stroke-dasharray="10 14" opacity="0.8" transform="rotate(-25 256 256)"/>
+
+  <!-- Main Logo Mark Group -->
+  <g filter="url(#ppLightShadow)" transform="translate(20, -10)">
+    <!-- Rear Fin / Trailing Speed Wave -->
+    <path d="M 140 330 C 180 320 220 295 240 270 L 190 275 Z" fill="#6366f1" opacity="0.7"/>
+
+    <!-- Left Wing (The Social Send / Paper Plane sweep) -->
+    <path d="M 155 350 L 255 130 L 245 285 Z" fill="url(#ppLightAccent)"/>
+
+    <!-- Central Fuselage / Jet Stream Peak (Pilot guidance) -->
+    <path d="M 255 130 L 375 255 L 275 295 L 245 285 Z" fill="url(#ppLightPrimary)"/>
+
+    <!-- Lower Fold / Shadow Keel -->
+    <path d="M 245 285 L 275 295 L 235 375 Z" fill="#312e81"/>
+
+    <!-- Aerodynamic Speed Edge / Highlighting Glint -->
+    <path d="M 255 130 L 155 350 L 245 285 Z" stroke="url(#ppLightGlint)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.8"/>
+    <path d="M 255 130 L 375 255" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity="0.9"/>
+
+    <!-- AI Cockpit Core -->
+    <circle cx="255" cy="130" r="6" fill="#ffffff"/>
+    <circle cx="255" cy="130" r="3.5" fill="#0284c7"/>
+
+    <!-- Signal Pulse Waves (Automated Broadcast / Posting) -->
+    <path d="M 320 185 C 345 195 365 215 375 240" stroke="#0284c7" stroke-width="4.5" stroke-linecap="round" stroke-dasharray="1 1" opacity="0.9"/>
+    <path d="M 345 165 C 380 180 405 210 415 245" stroke="#6366f1" stroke-width="3.5" stroke-linecap="round" opacity="0.75"/>
+  </g>
+</svg>
