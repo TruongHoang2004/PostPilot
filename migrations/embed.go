@@ -2,8 +2,8 @@ package migrations
 
 import "embed"
 
-// FS nhúng toàn bộ các file SQL migration vào thẳng trong binary Golang khi build.
-// Nhờ đó container/binary chạy migration không bị phụ thuộc vào đường dẫn file bên ngoài.
+// FS embeds all SQL migration files directly into the Go binary at compile time.
+// This ensures runtime containers and binaries have no external file path dependencies.
 //
 //go:embed *.sql
 var FS embed.FS

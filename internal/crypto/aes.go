@@ -12,13 +12,13 @@ import (
 	"io"
 )
 
-// TokenCipher cung cấp cơ chế mã hóa đối xứng AES-256-GCM chuẩn công nghiệp
-// để bảo vệ Facebook Page Access Token khi lưu trong Database.
+// TokenCipher provides AES-256-GCM symmetric encryption
+// to protect access tokens when stored in the database.
 type TokenCipher struct {
 	key []byte
 }
 
-// NewTokenCipher khởi tạo bộ mã hóa từ chuỗi key (chấp nhận 64 ký tự hex, 32 ký tự raw, hoặc băm SHA-256).
+// NewTokenCipher initializes a cipher from a raw key string (accepts 64-char hex, 32-char raw string, or SHA-256 fallback).
 func NewTokenCipher(rawKey string) (*TokenCipher, error) {
 	if rawKey == "" {
 		return nil, errors.New("token encryption key must not be empty")
@@ -43,7 +43,7 @@ func NewTokenCipher(rawKey string) (*TokenCipher, error) {
 	return &TokenCipher{key: keyBytes}, nil
 }
 
-// Encrypt mã hóa chuỗi plaintext token sang chuỗi Base64 chứa [nonce + ciphertext + GCM tag].
+// Encrypt encrypts a plaintext token into a Base64 string containing [nonce + ciphertext + GCM tag].
 func (tc *TokenCipher) Encrypt(plainText string) (string, error) {
 	if plainText == "" {
 		return "", errors.New("cannot encrypt empty token")
@@ -68,7 +68,7 @@ func (tc *TokenCipher) Encrypt(plainText string) (string, error) {
 	return base64.StdEncoding.EncodeToString(sealed), nil
 }
 
-// Decrypt giải mã chuỗi Base64 về lại raw Facebook Access Token.
+// Decrypt decrypts the Base64 ciphertext back to the original token string.
 func (tc *TokenCipher) Decrypt(cipherTextBase64 string) (string, error) {
 	if cipherTextBase64 == "" {
 		return "", errors.New("empty cipher text")
@@ -103,7 +103,7 @@ func (tc *TokenCipher) Decrypt(cipherTextBase64 string) (string, error) {
 	return string(plainBytes), nil
 }
 
-// MaskToken che giấu phần giữa của token khi hiển thị trên log hoặc UI.
+// MaskToken masks the middle characters of a token for secure display in logs or UI.
 func MaskToken(token string) string {
 	if len(token) <= 10 {
 		return "********"

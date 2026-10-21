@@ -10,14 +10,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/config"
-	"github.com/happy-darwin/fb-autoposter/internal/crypto"
-	"github.com/happy-darwin/fb-autoposter/internal/database"
-	_ "github.com/happy-darwin/fb-autoposter/internal/database/pgdriver"
-	"github.com/happy-darwin/fb-autoposter/internal/facebook"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/notifier"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/redis"
-	"github.com/happy-darwin/fb-autoposter/internal/worker"
+	"github.com/TruongHoang2004/PostPilot/internal/config"
+	"github.com/TruongHoang2004/PostPilot/internal/crypto"
+	"github.com/TruongHoang2004/PostPilot/internal/database"
+	_ "github.com/TruongHoang2004/PostPilot/internal/database/pgdriver"
+	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
+	"github.com/TruongHoang2004/PostPilot/internal/worker"
 )
 
 func main() {

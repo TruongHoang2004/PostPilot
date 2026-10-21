@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// handleAIGenerateContent sinh nội dung bài viết tự động bằng AI (Google Gemini).
+// handleAIGenerateContent generates post text and captions automatically via AI (Google Gemini).
 func (s *Server) handleAIGenerateContent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Topic string `json:"topic"`

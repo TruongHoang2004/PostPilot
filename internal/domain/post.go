@@ -2,7 +2,7 @@ package domain
 
 import "time"
 
-// Enums cho trạng thái vòng đời bài đăng (Post Lifecycle)
+// Post lifecycle status constants.
 const (
 	PostStatusDraft      = "DRAFT"
 	PostStatusScheduled  = "SCHEDULED"
@@ -13,13 +13,13 @@ const (
 	PostStatusCancelled  = "CANCELLED"
 )
 
-// Enums cho tầng hàng đợi (Queue Tier)
+// Queue tier constants.
 const (
-	QueueTierFast  = "FAST"  // Dành cho NONE, LINK, IMAGE, ALBUM
-	QueueTierHeavy = "HEAVY" // Dành cho VIDEO, REEL
+	QueueTierFast  = "FAST"  // For NONE, LINK, IMAGE, ALBUM
+	QueueTierHeavy = "HEAVY" // For VIDEO, REEL
 )
 
-// Post là Aggregate Root cốt lõi của Bounded Context "Post & Publishing".
+// Post is the core Aggregate Root of the "Post & Publishing" bounded context.
 type Post struct {
 	ID                string       `json:"id"`
 	ChannelID         string       `json:"channel_id"`
@@ -45,7 +45,7 @@ type Post struct {
 	UpdatedAt         time.Time    `json:"updated_at"`
 }
 
-// DetermineQueueTier tự động phân loại bài viết vào hàng đợi nhanh (FAST) hay nặng (HEAVY).
+// DetermineQueueTier automatically routes the post to FAST or HEAVY queue based on media type.
 func DetermineQueueTier(mediaType string) string {
 	if IsHeavyMedia(mediaType) {
 		return QueueTierHeavy
@@ -53,17 +53,17 @@ func DetermineQueueTier(mediaType string) string {
 	return QueueTierFast
 }
 
-// IsTerminal trả về true nếu bài viết đã ở trạng thái kết thúc (PUBLISHED hoặc CANCELLED).
+// IsTerminal returns true if the post is in a final state (PUBLISHED or CANCELLED).
 func (p *Post) IsTerminal() bool {
 	return p.Status == PostStatusPublished || p.Status == PostStatusCancelled
 }
 
-// CanCancel kiểm tra quy tắc nghiệp vụ xem bài viết có được phép hủy lịch hay không.
+// CanCancel checks business invariants to determine if a post can be cancelled.
 func (p *Post) CanCancel() bool {
 	return p.Status == PostStatusDraft || p.Status == PostStatusScheduled || p.Status == PostStatusFailed
 }
 
-// PrepareForCreation áp dụng các quy tắc khởi tạo mặc định cho Aggregate Root Post.
+// PrepareForCreation applies domain defaults when creating a new Post aggregate.
 func (p *Post) PrepareForCreation(publishNow bool, now time.Time) {
 	p.MediaType = NormalizeMediaType(p.MediaType, p.LinkURL)
 	p.QueueTier = DetermineQueueTier(p.MediaType)
@@ -85,7 +85,7 @@ func (p *Post) PrepareForCreation(publishNow bool, now time.Time) {
 	}
 }
 
-// MediaAttachments trả về danh sách các tệp đính kèm dưới dạng Value Objects chuẩn hóa.
+// MediaAttachments returns normalized MediaAttachment value objects.
 func (p *Post) MediaAttachments() []MediaAttachment {
 	items := make([]MediaAttachment, 0, len(p.MediaURLs))
 	for i, u := range p.MediaURLs {
@@ -98,7 +98,7 @@ func (p *Post) MediaAttachments() []MediaAttachment {
 	return items
 }
 
-// PublishLog lưu lịch sử chi tiết từng bước gọi sang nền tảng xuất bản để phục vụ kiểm toán & debug.
+// PublishLog records audit details for each external platform publishing step.
 type PublishLog struct {
 	ID             string    `json:"id"`
 	PostID         string    `json:"post_id"`
@@ -114,7 +114,7 @@ type PublishLog struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-// PublishJobPayload là gói tin JSON được đẩy vào Redis Queue cho Worker xử lý.
+// PublishJobPayload is the JSON message enqueued in Redis for worker processing.
 type PublishJobPayload struct {
 	PostID     string    `json:"post_id"`
 	ChannelID  string    `json:"channel_id"`
@@ -123,7 +123,7 @@ type PublishJobPayload struct {
 	EnqueuedAt time.Time `json:"enqueued_at"`
 }
 
-// SystemStats tổng hợp thống kê nhanh trên Dashboard.
+// SystemStats aggregates high-level dashboard metrics.
 type SystemStats struct {
 	TotalChannels   int `json:"total_channels"`
 	ActiveChannels  int `json:"active_channels"`

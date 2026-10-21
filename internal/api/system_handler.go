@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
 
-// handleHealthCheck kiểm tra tình trạng kết nối của API Server và hàng đợi Redis.
+// handleHealthCheck checks health and connectivity for API Server and Redis queues.
 func (s *Server) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	redisErr := s.redis.Ping(ctx)
@@ -30,7 +30,7 @@ func (s *Server) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGetStats trả về số liệu thống kê tổng quan của hệ thống.
+// handleGetStats returns aggregated system statistics.
 func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	stats, err := s.store.GetSystemStats(ctx)

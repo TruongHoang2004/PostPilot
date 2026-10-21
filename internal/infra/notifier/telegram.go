@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// TelegramNotifier gửi tin nhắn cảnh báo thời gian thực tới Admin khi có sự cố:
-// 1. Bài đăng thất bại sau khi đã hết số lần Retry.
-// 2. Page Access Token bị hết hạn hoặc thu hồi quyền (Error Code 190).
-// 3. Tần suất gọi API (Rate Limit) vượt ngưỡng cảnh báo.
+// TelegramNotifier sends real-time alert messages to operators on issues:
+// 1. Post publishing failure after exhausting retries.
+// 2. Access token expiration or revocation (e.g. Error Code 190).
+// 3. API rate limit exceeding warning thresholds.
 type TelegramNotifier struct {
 	botToken   string
 	chatID     string
@@ -21,7 +21,7 @@ type TelegramNotifier struct {
 	logger     *slog.Logger
 }
 
-// NewTelegramNotifier khởi tạo dịch vụ thông báo Telegram.
+// NewTelegramNotifier initializes a new Telegram notification service.
 func NewTelegramNotifier(botToken, chatID string, logger *slog.Logger) *TelegramNotifier {
 	return &TelegramNotifier{
 		botToken: botToken,
@@ -33,12 +33,12 @@ func NewTelegramNotifier(botToken, chatID string, logger *slog.Logger) *Telegram
 	}
 }
 
-// Enabled kiểm tra xem cấu hình Telegram đã được bật hay chưa.
+// Enabled checks whether the Telegram notifier is configured.
 func (t *TelegramNotifier) Enabled() bool {
 	return t.botToken != "" && t.chatID != ""
 }
 
-// SendAlert gửi cảnh báo định dạng Markdown tới nhóm/kênh Telegram của đội vận hành.
+// SendAlert sends a Markdown-formatted alert to the configured Telegram chat.
 func (t *TelegramNotifier) SendAlert(ctx context.Context, title string, details string) error {
 	if !t.Enabled() {
 		t.logger.Debug("Telegram notifier not configured, logging alert locally", "title", title, "details", details)

@@ -11,15 +11,15 @@ import (
 	"time"
 )
 
-// GeminiGenerator tích hợp Google Gemini API để tự động sáng tạo nội dung bài đăng Fanpage
-// theo cấu trúc chuẩn Marketing (Hook - Body - Call To Action - Hashtags).
+// GeminiGenerator integrates the Google Gemini API to generate engaging social post content
+// following standard marketing structure (Hook - Body - Call To Action - Hashtags).
 type GeminiGenerator struct {
 	apiKey     string
 	model      string
 	httpClient *http.Client
 }
 
-// NewGeminiGenerator khởi tạo dịch vụ AI sinh nội dung bài viết.
+// NewGeminiGenerator initializes an AI post generation service.
 func NewGeminiGenerator(apiKey, model string) *GeminiGenerator {
 	if model == "" {
 		model = "gemini-2.5-flash"
@@ -33,13 +33,13 @@ func NewGeminiGenerator(apiKey, model string) *GeminiGenerator {
 	}
 }
 
-// GeneratePostContent sinh nội dung bài đăng Facebook từ chủ đề và giọng văn mong muốn.
+// GeneratePostContent generates post content from a topic and tone.
 func (g *GeminiGenerator) GeneratePostContent(ctx context.Context, topic, tone string) (string, string, error) {
 	if tone == "" {
-		tone = "chuyên nghiệp, thu hút tương tác"
+		tone = "professional, engaging"
 	}
 
-	// Nếu người dùng chưa cấu hình GEMINI_API_KEY, trả về mẫu bài viết thông minh (Template Fallback)
+	// If GEMINI_API_KEY is not configured or uses placeholder, return a template fallback
 	if g.apiKey == "" || g.apiKey == "your_gemini_api_key_here" {
 		fallback := fmt.Sprintf(
 			"🔥 %s — Xu hướng không thể bỏ lỡ!\n\n"+

@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// ManagedPageInfo chứa thông tin Fanpage và Permanent Page Access Token trả về từ `/me/accounts`.
+// ManagedPageInfo contains Page metadata and Page Access Token returned by `/me/accounts`.
 type ManagedPageInfo struct {
 	PageID      string `json:"page_id"`
 	PageName    string `json:"page_name"`
@@ -15,16 +15,16 @@ type ManagedPageInfo struct {
 	AccessToken string `json:"access_token"`
 }
 
-// TokenDebugInfo chứa kết quả kiểm tra sức khỏe của Access Token từ `/debug_token`.
+// TokenDebugInfo contains token inspection results from `/debug_token`.
 type TokenDebugInfo struct {
 	IsValid   bool     `json:"is_valid"`
 	AppID     string   `json:"app_id"`
 	Type      string   `json:"type"`
-	ExpiresAt int64    `json:"expires_at"` // 0 nghĩa là Never Expires (Vĩnh viễn)
+	ExpiresAt int64    `json:"expires_at"` // 0 indicates never expires (Permanent Token)
 	Scopes    []string `json:"scopes"`
 }
 
-// BuildOAuthLoginURL tạo đường dẫn đăng nhập Facebook OAuth2 với đầy đủ quyền quản lý Fanpage.
+// BuildOAuthLoginURL constructs the Facebook OAuth2 login dialog URL with page management scopes.
 func (c *Client) BuildOAuthLoginURL(appID, redirectURI, state string) string {
 	scopes := []string{
 		"pages_manage_posts",
@@ -41,7 +41,7 @@ func (c *Client) BuildOAuthLoginURL(appID, redirectURI, state string) string {
 	return fmt.Sprintf("https://www.facebook.com/%s/dialog/oauth?%s", c.version, q.Encode())
 }
 
-// ExchangeCodeForUserToken đổi OAuth authorization `code` sang Short-lived User Access Token.
+// ExchangeCodeForUserToken exchanges an OAuth authorization code for a short-lived User Access Token.
 func (c *Client) ExchangeCodeForUserToken(ctx context.Context, appID, appSecret, redirectURI, code string) (string, error) {
 	q := url.Values{}
 	q.Set("client_id", appID)
@@ -60,7 +60,7 @@ func (c *Client) ExchangeCodeForUserToken(ctx context.Context, appID, appSecret,
 	return token, nil
 }
 
-// ExchangeShortToLongLivedUserToken đổi Short-lived User Token (1-2h) sang Long-lived User Token (60 ngày).
+// ExchangeShortToLongLivedUserToken exchanges a short-lived User Token (1-2 hours) for a long-lived User Token (60 days).
 func (c *Client) ExchangeShortToLongLivedUserToken(ctx context.Context, appID, appSecret, shortLivedUserToken string) (string, error) {
 	q := url.Values{}
 	q.Set("grant_type", "fb_exchange_token")
@@ -79,8 +79,8 @@ func (c *Client) ExchangeShortToLongLivedUserToken(ctx context.Context, appID, a
 	return token, nil
 }
 
-// FetchManagedPages gọi `/me/accounts` bằng Long-lived User Token để lấy danh sách Fanpage
-// kèm theo **Permanent Page Access Token** (Token vĩnh viễn không hết hạn).
+// FetchManagedPages queries `/me/accounts` with a long-lived User Token to fetch pages
+// along with Permanent Page Access Tokens (which never expire).
 func (c *Client) FetchManagedPages(ctx context.Context, longLivedUserToken string) ([]ManagedPageInfo, error) {
 	q := url.Values{}
 	q.Set("fields", "id,name,category,access_token")
@@ -118,7 +118,7 @@ func (c *Client) FetchManagedPages(ctx context.Context, longLivedUserToken strin
 	return pages, nil
 }
 
-// DebugToken kiểm tra trạng thái sống/chết của 1 Page Access Token.
+// DebugToken inspects the health and scopes of a target access token.
 func (c *Client) DebugToken(ctx context.Context, targetToken, appAccessToken string) (*TokenDebugInfo, error) {
 	if appAccessToken == "" {
 		appAccessToken = targetToken

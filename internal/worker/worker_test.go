@@ -10,13 +10,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/config"
-	"github.com/happy-darwin/fb-autoposter/internal/crypto"
-	"github.com/happy-darwin/fb-autoposter/internal/database"
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
-	"github.com/happy-darwin/fb-autoposter/internal/facebook"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/notifier"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/redis"
+	"github.com/TruongHoang2004/PostPilot/internal/config"
+	"github.com/TruongHoang2004/PostPilot/internal/crypto"
+	"github.com/TruongHoang2004/PostPilot/internal/database"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
 )
 
 type mockRoundTripper struct {
@@ -66,7 +66,7 @@ func TestSchedulerAndProcessorEndToEnd(t *testing.T) {
 
 	post, err := store.CreatePost(context.Background(), &domain.Post{
 		ChannelID:   channel.ID,
-		Content:     "Bài đăng tự động kiểm thử End-to-End bằng Golang!",
+		Content:     "Automated end-to-end testing post in Go!",
 		MediaType:   domain.MediaTypeNone,
 		Status:      domain.PostStatusScheduled,
 		ScheduledAt: time.Now().UTC().Add(-1 * time.Minute),

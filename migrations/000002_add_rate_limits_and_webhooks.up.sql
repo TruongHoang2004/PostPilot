@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Migration: 000002_add_rate_limits_and_webhooks (UP)
--- Description: Bổ sung bảng lưu sự kiện Webhook từ Meta và lịch sử AI Generation
+-- Description: Add webhook events table and AI generation logs table
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS webhook_events (

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
 
 const (
@@ -22,11 +22,11 @@ const (
 	RateKeyPrefix = "postpilot:ratelimit:channel:"
 )
 
-// ErrQueueEmpty được trả về khi BRPOP hết thời gian chờ mà chưa có job mới.
+// ErrQueueEmpty is returned when BRPOP times out without receiving a job.
 var ErrQueueEmpty = errors.New("redis queue empty timeout")
 
-// Client cung cấp kết nối tới Redis Server qua giao thức chuẩn RESP (Redis Serialization Protocol),
-// đồng thời hỗ trợ in-memory fallback để chạy unit test hoặc local dev không cần bật Redis.
+// Client provides a Redis connection via standard RESP (Redis Serialization Protocol),
+// supporting an in-memory fallback for testing and development without a live Redis server.
 type Client struct {
 	addr     string
 	password string
@@ -38,7 +38,7 @@ type Client struct {
 	memKV             map[string]string
 }
 
-// NewClient khởi tạo Redis Client và tự động kiểm tra kết nối.
+// NewClient initializes a Redis client and verifies connection with a PING.
 func NewClient(addr, password string, db int) *Client {
 	c := &Client{
 		addr:     addr,
@@ -53,7 +53,7 @@ func NewClient(addr, password string, db int) *Client {
 	return c
 }
 
-// NewInMemoryClient tạo Redis Client chạy hoàn toàn trong RAM phục vụ Unit Test.
+// NewInMemoryClient creates an in-memory Redis client mock for testing.
 func NewInMemoryClient() *Client {
 	return &Client{
 		useMemoryFallback: true,
@@ -80,7 +80,7 @@ func (c *Client) Ping(ctx context.Context) error {
 	return fmt.Errorf("unexpected PING response: %v", resp)
 }
 
-// EnqueuePublishJob đẩy 1 gói tin bài viết vào hàng đợi `fast` hoặc `heavy`.
+// EnqueuePublishJob pushes a publishing job payload into either the fast or heavy queue.
 func (c *Client) EnqueuePublishJob(ctx context.Context, payload domain.PublishJobPayload) error {
 	queueKey := QueueKeyFast
 	if payload.QueueTier == domain.QueueTierHeavy {
@@ -103,7 +103,7 @@ func (c *Client) EnqueuePublishJob(ctx context.Context, payload domain.PublishJo
 	return err
 }
 
-// DequeuePublishJob lấy 1 job ra khỏi hàng đợi (FIFO bằng RPOP / BRPOP).
+// DequeuePublishJob pops a job from the queue (FIFO using RPOP / BRPOP).
 func (c *Client) DequeuePublishJob(ctx context.Context, tier string, timeoutSec int) (*domain.PublishJobPayload, error) {
 	queueKey := QueueKeyFast
 	if tier == domain.QueueTierHeavy {
@@ -159,7 +159,7 @@ func (c *Client) DequeuePublishJob(ctx context.Context, tier string, timeoutSec 
 	return &job, nil
 }
 
-// QueueDepth trả về số lượng job đang nằm chờ trong Queue.
+// QueueDepth returns the number of jobs waiting in the specified queue tier.
 func (c *Client) QueueDepth(ctx context.Context, tier string) (int, error) {
 	queueKey := QueueKeyFast
 	if tier == domain.QueueTierHeavy {
@@ -182,7 +182,7 @@ func (c *Client) QueueDepth(ctx context.Context, tier string) (int, error) {
 	return 0, nil
 }
 
-// SaveChannelRateLimit lưu phần trăm sử dụng Rate-Limit của Channel vào Redis với TTL 15 phút.
+// SaveChannelRateLimit caches the rate limit usage for a channel in Redis with a 15-minute TTL.
 func (c *Client) SaveChannelRateLimit(ctx context.Context, channelExternalID string, usage domain.RateLimitUsage) error {
 	key := RateKeyPrefix + channelExternalID
 	raw, _ := json.Marshal(usage)
@@ -198,7 +198,7 @@ func (c *Client) SaveChannelRateLimit(ctx context.Context, channelExternalID str
 	return err
 }
 
-// GetChannelRateLimit đọc thông số Rate-Limit hiện tại của Channel từ Redis.
+// GetChannelRateLimit reads cached channel rate limit usage from Redis.
 func (c *Client) GetChannelRateLimit(ctx context.Context, channelExternalID string) (domain.RateLimitUsage, error) {
 	key := RateKeyPrefix + channelExternalID
 	var usage domain.RateLimitUsage
@@ -224,7 +224,7 @@ func (c *Client) GetChannelRateLimit(ctx context.Context, channelExternalID stri
 	return usage, nil
 }
 
-// DeleteChannelRateLimit xóa thông số Rate-Limit của Channel khỏi Redis khi xóa Channel.
+// DeleteChannelRateLimit deletes the cached rate limit metrics for a channel upon channel deletion.
 func (c *Client) DeleteChannelRateLimit(ctx context.Context, channelExternalID string) error {
 	key := RateKeyPrefix + channelExternalID
 	if c.useMemoryFallback {
@@ -237,7 +237,7 @@ func (c *Client) DeleteChannelRateLimit(ctx context.Context, channelExternalID s
 	return err
 }
 
-// execCommand thực thi lệnh Redis theo chuẩn RESP2 qua TCP socket.
+// execCommand executes a Redis command complying with the RESP2 protocol over TCP socket.
 func (c *Client) execCommand(ctx context.Context, timeout time.Duration, args ...string) (any, error) {
 	dialer := net.Dialer{Timeout: 5 * time.Second}
 	conn, err := dialer.DialContext(ctx, "tcp", c.addr)

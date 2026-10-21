@@ -8,9 +8,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/config"
-	"github.com/happy-darwin/fb-autoposter/internal/database"
-	_ "github.com/happy-darwin/fb-autoposter/internal/database/pgdriver"
+	"github.com/TruongHoang2004/PostPilot/internal/config"
+	"github.com/TruongHoang2004/PostPilot/internal/database"
+	_ "github.com/TruongHoang2004/PostPilot/internal/database/pgdriver"
 )
 
 func main() {
@@ -32,7 +32,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Chờ PostgreSQL sẵn sàng khi khởi chạy trong Docker Compose
+	// Wait for PostgreSQL readiness when starting up in Docker Compose
 	for attempt := 1; attempt <= 15; attempt++ {
 		if err := db.PingContext(ctx); err == nil {
 			break

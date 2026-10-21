@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
 
-// handleListPosts trả về danh sách các bài viết (Post Aggregate) theo bộ lọc trạng thái.
+// handleListPosts returns posts (Post Aggregate) matching the status filter.
 func (s *Server) handleListPosts(w http.ResponseWriter, r *http.Request) {
 	statusFilter := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("status")))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -27,8 +27,8 @@ func (s *Server) handleListPosts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleCreatePost tạo mới một bài viết, áp dụng các quy tắc nghiệp vụ của Post Aggregate Root
-// và tự động đẩy vào hàng đợi (FAST / HEAVY) nếu yêu cầu đăng ngay.
+// handleCreatePost creates a new post aggregate root applying domain rules
+// and automatically enqueues it to the worker queue if publish_now is true.
 func (s *Server) handleCreatePost(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var req struct {
@@ -37,7 +37,7 @@ func (s *Server) handleCreatePost(w http.ResponseWriter, r *http.Request) {
 		LinkURL     string   `json:"link_url"`
 		MediaType   string   `json:"media_type"`
 		MediaURLs   []string `json:"media_urls"`
-		ScheduledAt string   `json:"scheduled_at"` // ISO-8601 (RFC3339). Nếu rỗng -> Đăng ngay hoặc hẹn hiện tại
+		ScheduledAt string   `json:"scheduled_at"` // ISO-8601 (RFC3339). If empty -> Immediate or current schedule
 		PublishNow  bool     `json:"publish_now"`
 		MaxRetries  int      `json:"max_retries"`
 	}
@@ -104,7 +104,7 @@ func (s *Server) handleCreatePost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, post)
 }
 
-// handleGetPostDetail trả về thông tin chi tiết bài viết kèm lịch sử kiểm toán `publish_logs`.
+// handleGetPostDetail returns detailed post information and publish audit logs.
 func (s *Server) handleGetPostDetail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	postID := r.PathValue("id")
@@ -122,7 +122,7 @@ func (s *Server) handleGetPostDetail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePublishPostNow kích hoạt xuất bản bài viết ngay lập tức (đồng bộ qua `?sync=true` hoặc bất đồng bộ qua Queue).
+// handlePublishPostNow triggers immediate publishing (synchronous via `?sync=true` or async via Queue).
 func (s *Server) handlePublishPostNow(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	postID := r.PathValue("id")
@@ -146,7 +146,7 @@ func (s *Server) handlePublishPostNow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"message":      "Đã đăng bài trực tiếp thành công",
+			"message":      "Post published directly successfully",
 			"post":         updated,
 			"publish_logs": logs,
 		})
@@ -166,13 +166,13 @@ func (s *Server) handlePublishPostNow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"message":    "Đã đẩy bài viết vào hàng đợi ưu tiên (" + post.QueueTier + ")",
+		"message":    "Post enqueued to priority queue (" + post.QueueTier + ")",
 		"post_id":    post.ID,
 		"queue_tier": post.QueueTier,
 	})
 }
 
-// handleCancelPost hủy lịch đăng của một bài viết chưa xuất bản.
+// handleCancelPost cancels scheduled publishing for a non-terminal post.
 func (s *Server) handleCancelPost(w http.ResponseWriter, r *http.Request) {
 	postID := r.PathValue("id")
 	if err := s.store.CancelPost(r.Context(), postID); err != nil {
@@ -180,7 +180,7 @@ func (s *Server) handleCancelPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"message": "Đã hủy lịch đăng bài viết",
+		"message": "Post schedule cancelled successfully",
 		"post_id": postID,
 	})
 }

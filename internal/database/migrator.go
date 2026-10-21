@@ -10,18 +10,18 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/happy-darwin/fb-autoposter/internal/database/pgdriver"
-	"github.com/happy-darwin/fb-autoposter/migrations"
+	_ "github.com/TruongHoang2004/PostPilot/internal/database/pgdriver"
+	"github.com/TruongHoang2004/PostPilot/migrations"
 )
 
-// MigrationRecord đại diện cho 1 bản ghi lịch sử migration đã được thực thi trong DB.
+// MigrationRecord represents a single migration execution record in the database.
 type MigrationRecord struct {
 	Version   string
 	Name      string
 	AppliedAt string
 }
 
-// MigrationFile đại diện cho 1 cặp file .up.sql / .down.sql trong thư mục migrations/.
+// MigrationFile represents a pair of .up.sql / .down.sql migration files in the migrations/ directory.
 type MigrationFile struct {
 	Version  string
 	Name     string
@@ -31,13 +31,13 @@ type MigrationFile struct {
 	DownSQL  string
 }
 
-// Migrator quản lý việc nâng cấp (Up) và hạ cấp (Down) schema PostgreSQL bằng Golang.
+// Migrator manages PostgreSQL schema upgrades (Up) and rollbacks (Down).
 type Migrator struct {
 	db     *sql.DB
 	logger *slog.Logger
 }
 
-// NewMigrator khởi tạo bộ chạy migration từ kết nối *sql.DB.
+// NewMigrator initializes a database migrator using the provided *sql.DB connection.
 func NewMigrator(db *sql.DB, logger *slog.Logger) *Migrator {
 	return &Migrator{
 		db:     db,
@@ -56,7 +56,7 @@ func (m *Migrator) ensureMigrationsTable(ctx context.Context) error {
 	return err
 }
 
-// LoadEmbeddedMigrations đọc tất cả file *.sql được nhúng qua embed.FS.
+// LoadEmbeddedMigrations reads all *.sql files embedded via embed.FS.
 func LoadEmbeddedMigrations() ([]MigrationFile, error) {
 	entries, err := fs.ReadDir(migrations.FS, ".")
 	if err != nil {
@@ -134,10 +134,13 @@ func (m *Migrator) getAppliedVersions(ctx context.Context) (map[string]Migration
 		}
 		applied[rec.Version] = rec
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return applied, nil
 }
 
-// Up chạy tất cả các bản migration chưa được áp dụng theo đúng thứ tự version tăng dần.
+// Up executes all unapplied migrations in ascending version order.
 func (m *Migrator) Up(ctx context.Context) (int, error) {
 	files, err := LoadEmbeddedMigrations()
 	if err != nil {
@@ -178,7 +181,7 @@ func (m *Migrator) Up(ctx context.Context) (int, error) {
 	return appliedCount, nil
 }
 
-// DownOne rollback bản migration gần nhất vừa được áp dụng.
+// DownOne rolls back the single most recently applied migration.
 func (m *Migrator) DownOne(ctx context.Context) (string, error) {
 	files, err := LoadEmbeddedMigrations()
 	if err != nil {
@@ -211,7 +214,7 @@ func (m *Migrator) DownOne(ctx context.Context) (string, error) {
 	return "", nil
 }
 
-// Status trả về danh sách trạng thái tất cả các bản migration.
+// Status returns the migration status list of all migrations.
 func (m *Migrator) Status(ctx context.Context) ([]map[string]string, error) {
 	files, err := LoadEmbeddedMigrations()
 	if err != nil {

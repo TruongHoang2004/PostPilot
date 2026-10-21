@@ -7,20 +7,20 @@ import (
 	"os"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/config"
-	"github.com/happy-darwin/fb-autoposter/internal/crypto"
-	"github.com/happy-darwin/fb-autoposter/internal/database"
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
-	"github.com/happy-darwin/fb-autoposter/internal/facebook"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/ai"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/notifier"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/redis"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/storage"
-	"github.com/happy-darwin/fb-autoposter/internal/worker"
+	"github.com/TruongHoang2004/PostPilot/internal/config"
+	"github.com/TruongHoang2004/PostPilot/internal/crypto"
+	"github.com/TruongHoang2004/PostPilot/internal/database"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/ai"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/storage"
+	"github.com/TruongHoang2004/PostPilot/internal/worker"
 )
 
-// Server điều phối HTTP Router, gắn kết các Bounded Context Handlers (Publishing, Channel, Media, AI, System)
-// và các Platform Adapters (Facebook OAuth/Webhook).
+// Server coordinates the HTTP router, binding Bounded Context handlers (Publishing, Channel, Media, AI, System)
+// and Platform Adapters (Facebook OAuth/Webhooks).
 type Server struct {
 	cfg       *config.Config
 	store     database.Store
@@ -66,7 +66,7 @@ func NewServer(
 	}
 }
 
-// WithPublisherRegistry cho phép tiêm (inject) bộ đăng ký Adapter đa nền tảng tùy chỉnh vào API Server.
+// WithPublisherRegistry allows injecting a custom multi-platform adapter registry into the API Server.
 func (s *Server) WithPublisherRegistry(reg *domain.PublisherRegistry) *Server {
 	if reg != nil {
 		s.registry = reg
@@ -74,7 +74,7 @@ func (s *Server) WithPublisherRegistry(reg *domain.PublisherRegistry) *Server {
 	return s
 }
 
-// Handler khởi tạo HTTP Router với các module đã được phân tách theo Bounded Context.
+// Handler initializes the HTTP router with modules structured by Bounded Contexts.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 

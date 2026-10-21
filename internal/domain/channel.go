@@ -2,7 +2,7 @@ package domain
 
 import "time"
 
-// PlatformType định danh nền tảng mạng xã hội của một Kênh xuất bản (Publishing Channel).
+// PlatformType identifies the social platform of a publishing Channel.
 type PlatformType string
 
 const (
@@ -12,7 +12,7 @@ const (
 	PlatformTikTok   PlatformType = "TIKTOK"
 )
 
-// NormalizePlatform chuẩn hóa tên nền tảng, mặc định là FACEBOOK nếu để trống.
+// NormalizePlatform normalizes the platform identifier, defaulting to FACEBOOK if empty.
 func NormalizePlatform(p PlatformType) PlatformType {
 	if p == "" {
 		return PlatformFacebook
@@ -20,7 +20,7 @@ func NormalizePlatform(p PlatformType) PlatformType {
 	return p
 }
 
-// IsValidPlatform kiểm tra xem tên nền tảng có nằm trong danh mục hỗ trợ hay không.
+// IsValidPlatform verifies if the platform identifier is within supported platforms.
 func IsValidPlatform(p PlatformType) bool {
 	switch p {
 	case PlatformFacebook, PlatformLinkedIn, PlatformTwitter, PlatformTikTok:
@@ -30,7 +30,7 @@ func IsValidPlatform(p PlatformType) bool {
 	}
 }
 
-// Enums cho trạng thái Token / Credential của Kênh xuất bản
+// Channel token and credential status constants.
 const (
 	TokenStatusActive      = "ACTIVE"
 	TokenStatusExpired     = "EXPIRED"
@@ -38,14 +38,14 @@ const (
 	TokenStatusRateLimited = "RATE_LIMITED"
 )
 
-// RateLimitUsage đại diện cho mức tải trọng API hiện tại của Kênh xuất bản (0-100%).
+// RateLimitUsage represents current API usage levels of a channel (0-100%).
 type RateLimitUsage struct {
 	CallCount    int `json:"call_count"`
 	TotalTime    int `json:"total_time"`
 	TotalCPUTime int `json:"total_cputime"`
 }
 
-// MaxPercent trả về mức % cao nhất trong các thông số giới hạn API.
+// MaxPercent returns the highest usage percentage across all rate limit metrics.
 func (r RateLimitUsage) MaxPercent() int {
 	m := r.CallCount
 	if r.TotalTime > m {
@@ -57,15 +57,15 @@ func (r RateLimitUsage) MaxPercent() int {
 	return m
 }
 
-// Channel là thực thể Domain đại diện cho một Đích xuất bản (Publishing Target / Social Account)
-// độc lập với nền tảng mạng xã hội cụ thể (Facebook Page, LinkedIn Organization, X Account, TikTok Profile,...).
+// Channel is the Domain entity representing a publishing target (social media account)
+// agnostic of the underlying platform (Facebook Page, LinkedIn Org, X Account, TikTok Profile, etc.).
 type Channel struct {
 	ID                   string       `json:"id"`
 	Platform             PlatformType `json:"platform"`
 	ExternalID           string       `json:"external_id"`
 	Name                 string       `json:"name"`
 	Category             string       `json:"category"`
-	EncryptedAccessToken string       `json:"-"` // Không bao giờ trả về qua JSON API
+	EncryptedAccessToken string       `json:"-"` // Never serialized in API responses
 	MaskedToken          string       `json:"masked_token,omitempty"`
 	TokenStatus          string       `json:"token_status"`
 	TokenExpiresAt       *time.Time   `json:"token_expires_at,omitempty"`
@@ -78,7 +78,7 @@ type Channel struct {
 	UpdatedAt            time.Time    `json:"updated_at"`
 }
 
-// RateLimitUsage trả về Value Object RateLimitUsage của Channel.
+// RateLimitUsage returns the RateLimitUsage value object for the Channel.
 func (c *Channel) RateLimitUsage() RateLimitUsage {
 	return RateLimitUsage{
 		CallCount:    c.RateLimitCallCount,
@@ -87,12 +87,12 @@ func (c *Channel) RateLimitUsage() RateLimitUsage {
 	}
 }
 
-// MaxRateLimitUsage trả về chỉ số % sử dụng API cao nhất của Channel.
+// MaxRateLimitUsage returns the maximum API usage percentage for the Channel.
 func (c *Channel) MaxRateLimitUsage() int {
 	return c.RateLimitUsage().MaxPercent()
 }
 
-// IsUsable kiểm tra xem Kênh có đang hoạt động và có Credential hợp lệ để đăng bài hay không.
+// IsUsable checks if the channel is active and has valid credentials for publishing.
 func (c *Channel) IsUsable() bool {
 	if !c.IsActive {
 		return false

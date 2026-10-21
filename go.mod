@@ -1,3 +1,3 @@
-module github.com/happy-darwin/fb-autoposter
+module github.com/TruongHoang2004/PostPilot
 
 go 1.26

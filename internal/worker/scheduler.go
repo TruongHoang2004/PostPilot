@@ -6,19 +6,19 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/config"
-	"github.com/happy-darwin/fb-autoposter/internal/crypto"
-	"github.com/happy-darwin/fb-autoposter/internal/database"
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
-	"github.com/happy-darwin/fb-autoposter/internal/facebook"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/notifier"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/redis"
+	"github.com/TruongHoang2004/PostPilot/internal/config"
+	"github.com/TruongHoang2004/PostPilot/internal/crypto"
+	"github.com/TruongHoang2004/PostPilot/internal/database"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
 )
 
-// Scheduler chịu trách nhiệm:
-// 1. Quét định kỳ các bài viết đã đến giờ hẹn (`SCHEDULED`) hoặc đến giờ thử lại (`FAILED` + `next_retry_at <= NOW()`).
-// 2. Đẩy job vào Redis Queue (`FAST` hoặc `HEAVY`).
-// 3. Kiểm tra sức khỏe định kỳ của toàn bộ Channel Credentials thông qua `domain.PublisherRegistry`.
+// Scheduler is responsible for:
+// 1. Periodically scanning due posts (`SCHEDULED` or `FAILED` + `next_retry_at <= NOW()`).
+// 2. Enqueuing jobs into Redis Queues (`FAST` or `HEAVY`).
+// 3. Periodically verifying token health for all active Channels via `domain.PublisherRegistry`.
 type Scheduler struct {
 	cfg      *config.Config
 	store    database.Store
@@ -53,7 +53,7 @@ func NewScheduler(
 	}
 }
 
-// WithPublisherRegistry cho phép cấu hình bộ đăng ký Adapter đa nền tảng cho Scheduler.
+// WithPublisherRegistry configures a custom multi-platform adapter registry for the Scheduler.
 func (s *Scheduler) WithPublisherRegistry(reg *domain.PublisherRegistry) *Scheduler {
 	if reg != nil {
 		s.registry = reg
@@ -61,7 +61,7 @@ func (s *Scheduler) WithPublisherRegistry(reg *domain.PublisherRegistry) *Schedu
 	return s
 }
 
-// Start khởi chạy vòng lặp quét lịch hẹn và vòng lặp kiểm tra sức khỏe Token.
+// Start launches the background loops for due post scanning and token health checks.
 func (s *Scheduler) Start(ctx context.Context) {
 	go s.runDuePostScanner(ctx)
 	go s.runTokenHealthChecker(ctx)
@@ -72,7 +72,7 @@ func (s *Scheduler) runDuePostScanner(ctx context.Context) {
 	defer ticker.Stop()
 
 	s.logger.Info("Post Scheduler started", "interval", s.cfg.SchedulerInterval.String())
-	// Quét ngay lần đầu khi khởi động
+	// Perform immediate scan upon startup
 	s.ScanAndEnqueueDuePosts(ctx)
 
 	for {
@@ -86,7 +86,7 @@ func (s *Scheduler) runDuePostScanner(ctx context.Context) {
 	}
 }
 
-// ScanAndEnqueueDuePosts thực thi 1 chu kỳ quét DB và đẩy các bài đến hạn vào Redis Queue.
+// ScanAndEnqueueDuePosts executes a single polling cycle claiming due posts and enqueuing them into Redis.
 func (s *Scheduler) ScanAndEnqueueDuePosts(ctx context.Context) int {
 	now := time.Now().UTC()
 	claimedPosts, err := s.store.ClaimDuePosts(ctx, now, 50)
@@ -131,7 +131,7 @@ func (s *Scheduler) runTokenHealthChecker(ctx context.Context) {
 	}
 }
 
-// CheckAllChannelTokens kiểm tra toàn bộ các Channel đang hoạt động xem Credential còn hợp lệ trên nền tảng đích hay không.
+// CheckAllChannelTokens verifies token health for all active channels on their respective platforms.
 func (s *Scheduler) CheckAllChannelTokens(ctx context.Context) {
 	channels, err := s.store.ListChannels(ctx)
 	if err != nil {
@@ -161,8 +161,8 @@ func (s *Scheduler) CheckAllChannelTokens(ctx context.Context) {
 			_ = s.store.UpdateChannelTokenStatus(ctx, channel.ID, domain.TokenStatusExpired, now)
 			_ = s.notifier.SendAlert(
 				ctx,
-				"Channel Access Token Hết Hạn / Mất Quyền",
-				fmt.Sprintf("Kênh: *%s* (`%s` - `%s`)\nLý do: Token không còn hợp lệ. Vui lòng kết nối lại OAuth trên Dashboard.", channel.Name, channel.ExternalID, channel.Platform),
+				"Channel Access Token Expired or Revoked",
+				fmt.Sprintf("Channel: *%s* (`%s` - `%s`)\nReason: Access token is no longer valid. Please reconnect OAuth on the dashboard.", channel.Name, channel.ExternalID, channel.Platform),
 			)
 			continue
 		}

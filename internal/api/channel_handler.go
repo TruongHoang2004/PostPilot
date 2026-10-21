@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/crypto"
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/crypto"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
 
-// handleListChannels trả về danh sách các Kênh xuất bản đã kết nối kèm trạng thái Rate-Limit.
+// handleListChannels returns connected publishing channels along with their rate limit usage.
 func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	channels, err := s.store.ListChannels(ctx)
@@ -35,7 +35,7 @@ func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleUpsertChannel thêm mới hoặc cập nhật một Kênh xuất bản (Channel).
+// handleUpsertChannel creates or updates a publishing Channel.
 func (s *Server) handleUpsertChannel(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Platform    string `json:"platform"`
@@ -52,7 +52,7 @@ func (s *Server) handleUpsertChannel(w http.ResponseWriter, r *http.Request) {
 	platform := domain.NormalizePlatform(domain.PlatformType(strings.ToUpper(strings.TrimSpace(req.Platform))))
 	if !domain.IsValidPlatform(platform) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": "Nền tảng không hợp lệ. Các nền tảng được hỗ trợ: FACEBOOK, LINKEDIN, TWITTER, TIKTOK",
+			"error": "Invalid platform. Supported platforms: FACEBOOK, LINKEDIN, TWITTER, TIKTOK",
 		})
 		return
 	}
@@ -67,8 +67,8 @@ func (s *Server) handleUpsertChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Nếu là kênh Facebook và người dùng dán User Access Token thay vì Page Access Token,
-	// tự động gọi Adapter Facebook để trích xuất đúng Page Access Token của trang đó.
+	// For Facebook channels where a User Access Token is provided instead of Page Access Token,
+	// automatically invoke the Facebook adapter to extract the correct Page Access Token.
 	finalToken := req.AccessToken
 	if platform == domain.PlatformFacebook && s.fbClient != nil {
 		if managedPages, err := s.fbClient.FetchManagedPages(r.Context(), req.AccessToken); err == nil && len(managedPages) > 0 {
@@ -108,7 +108,7 @@ func (s *Server) handleUpsertChannel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, channel)
 }
 
-// handleVerifyChannelToken kiểm tra sức khỏe Credential của Channel thông qua `domain.PublisherRegistry`.
+// handleVerifyChannelToken verifies credential health for a Channel via `domain.PublisherRegistry`.
 func (s *Server) handleVerifyChannelToken(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	channelID := r.PathValue("id")
@@ -157,19 +157,19 @@ func (s *Server) handleVerifyChannelToken(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// handleDeleteChannel xóa Kênh xuất bản và dọn dẹp dữ liệu liên quan.
+// handleDeleteChannel removes a channel and purges related cached data.
 func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	channelID := r.PathValue("id")
 
 	channel, err := s.store.GetChannelByID(ctx, channelID)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]any{"error": "Không tìm thấy Kênh xuất bản cần xóa"})
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "channel not found"})
 		return
 	}
 
 	if err := s.store.DeleteChannel(ctx, channelID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "Xóa Kênh thất bại: " + err.Error()})
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "delete channel failed: " + err.Error()})
 		return
 	}
 
@@ -180,7 +180,7 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("Channel deleted successfully", "channel_id", channelID, "name", channel.Name, "platform", channel.Platform)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"message":    "Đã xóa Kênh xuất bản thành công",
+		"message":    "Channel deleted successfully",
 		"channel_id": channelID,
 	})
 }

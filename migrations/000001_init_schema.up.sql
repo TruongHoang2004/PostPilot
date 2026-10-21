@@ -1,11 +1,11 @@
 -- ============================================================================
 -- Migration: 000001_init_schema (UP)
--- Description: Khởi tạo các bảng cốt lõi cho hệ thống đăng bài tự động Facebook
+-- Description: Initialize core tables for PostPilot publishing system
 -- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- 1. Bảng quản lý danh sách Facebook Fanpage & Token đã mã hóa AES-256-GCM
+-- 1. Table managing Facebook pages & AES-256-GCM encrypted tokens
 CREATE TABLE IF NOT EXISTS facebook_pages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     page_id VARCHAR(64) NOT NULL UNIQUE,
@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS facebook_pages (
     category VARCHAR(128) DEFAULT '',
     encrypted_access_token TEXT NOT NULL,
     token_status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE', -- ACTIVE, EXPIRED, REVOKED, RATE_LIMITED
-    token_expires_at TIMESTAMPTZ NULL,                 -- NULL nếu là Permanent Page Token
+    token_expires_at TIMESTAMPTZ NULL,                 -- NULL for permanent page tokens
     last_checked_at TIMESTAMPTZ NULL,
     rate_limit_call_count INT NOT NULL DEFAULT 0,
     rate_limit_total_time INT NOT NULL DEFAULT 0,
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS facebook_pages (
 
 CREATE INDEX IF NOT EXISTS idx_facebook_pages_status ON facebook_pages(token_status, is_active);
 
--- 2. Bảng quản lý tài nguyên Media (Ảnh, Video, Reels trên S3 / MinIO / CDN)
+-- 2. Table managing media assets (Photos, Videos, Reels on S3 / MinIO / CDN)
 CREATE TABLE IF NOT EXISTS media_assets (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     file_name VARCHAR(255) NOT NULL,
@@ -37,19 +37,19 @@ CREATE TABLE IF NOT EXISTS media_assets (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 3. Bảng quản lý Bài viết & Lịch đăng (Posts & Schedules)
+-- 3. Table managing posts & schedules
 CREATE TABLE IF NOT EXISTS posts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     page_uuid UUID NOT NULL REFERENCES facebook_pages(id) ON DELETE CASCADE,
     content TEXT NOT NULL DEFAULT '',
     link_url TEXT NOT NULL DEFAULT '',
     media_type VARCHAR(32) NOT NULL DEFAULT 'NONE',    -- NONE, LINK, IMAGE, ALBUM, VIDEO, REEL
-    media_urls JSONB NOT NULL DEFAULT '[]'::jsonb,     -- Mảng các URL ảnh/video trên S3/CDN
+    media_urls JSONB NOT NULL DEFAULT '[]'::jsonb,     -- Array of image/video URLs on S3/CDN
     status VARCHAR(32) NOT NULL DEFAULT 'DRAFT',       -- DRAFT, SCHEDULED, QUEUED, PROCESSING, PUBLISHED, FAILED, CANCELLED
-    queue_tier VARCHAR(16) NOT NULL DEFAULT 'FAST',    -- FAST (Text/Link/Photo) hoặc HEAVY (Video/Reel)
+    queue_tier VARCHAR(16) NOT NULL DEFAULT 'FAST',    -- FAST (Text/Link/Photo) or HEAVY (Video/Reel)
     scheduled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     published_at TIMESTAMPTZ NULL,
-    fb_post_id VARCHAR(128) NOT NULL DEFAULT '',       -- ID bài viết do Meta Graph API trả về
+    fb_post_id VARCHAR(128) NOT NULL DEFAULT '',       -- Post ID returned from platform API
     retry_count INT NOT NULL DEFAULT 0,
     max_retries INT NOT NULL DEFAULT 3,
     next_retry_at TIMESTAMPTZ NULL,
@@ -60,14 +60,14 @@ CREATE TABLE IF NOT EXISTS posts (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Index phục vụ Cron Scheduler quét bài đến giờ đăng cực nhanh (SELECT ... FOR UPDATE SKIP LOCKED)
+-- Fast scheduler index for due post scans (SELECT ... FOR UPDATE SKIP LOCKED)
 CREATE INDEX IF NOT EXISTS idx_posts_scheduler_scan
     ON posts(status, scheduled_at)
     WHERE status IN ('SCHEDULED', 'FAILED');
 
 CREATE INDEX IF NOT EXISTS idx_posts_page_uuid ON posts(page_uuid, created_at DESC);
 
--- 4. Bảng lưu lịch sử gọi API sang Meta Graph (Publish Audit & Debug Logs)
+-- 4. Table storing publish logs & audit history
 CREATE TABLE IF NOT EXISTS publish_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     post_id UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,

@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Config chứa toàn bộ cấu hình của hệ thống Facebook Auto-Poster.
+// Config holds the application configuration.
 type Config struct {
 	AppEnv   string
 	HTTPPort string
@@ -42,12 +42,12 @@ type Config struct {
 	S3SecretKey     string
 
 	// Worker & Scheduler
-	SchedulerInterval          time.Duration
-	TokenCheckInterval         time.Duration
-	FastWorkerConcurrency      int
-	HeavyWorkerConcurrency     int
-	RateLimitThresholdPercent  int
-	VideoChunkSizeBytes        int
+	SchedulerInterval         time.Duration
+	TokenCheckInterval        time.Duration
+	FastWorkerConcurrency     int
+	HeavyWorkerConcurrency    int
+	RateLimitThresholdPercent int
+	VideoChunkSizeBytes       int
 
 	// AI (Gemini) & Alerting (Telegram)
 	GeminiAPIKey     string
@@ -56,7 +56,7 @@ type Config struct {
 	TelegramChatID   string
 }
 
-// Load nạp file .env (nếu có) và đọc các biến môi trường với giá trị mặc định an toàn.
+// Load loads configuration from .env file (if present) and environment variables with safe defaults.
 func Load() *Config {
 	loadDotEnv(".env")
 
@@ -125,6 +125,9 @@ func loadDotEnv(filename string) {
 		if _, exists := os.LookupEnv(key); !exists {
 			_ = os.Setenv(key, val)
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return
 	}
 }
 

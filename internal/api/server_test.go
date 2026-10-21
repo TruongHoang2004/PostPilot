@@ -12,15 +12,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/happy-darwin/fb-autoposter/internal/config"
-	"github.com/happy-darwin/fb-autoposter/internal/crypto"
-	"github.com/happy-darwin/fb-autoposter/internal/database"
-	"github.com/happy-darwin/fb-autoposter/internal/facebook"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/ai"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/notifier"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/redis"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/storage"
-	"github.com/happy-darwin/fb-autoposter/internal/worker"
+	"github.com/TruongHoang2004/PostPilot/internal/config"
+	"github.com/TruongHoang2004/PostPilot/internal/crypto"
+	"github.com/TruongHoang2004/PostPilot/internal/database"
+	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/ai"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/storage"
+	"github.com/TruongHoang2004/PostPilot/internal/worker"
 )
 
 func TestAPIEndpointsFlow(t *testing.T) {
@@ -131,7 +131,7 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	}
 
 	// 4. Test POST /api/v1/ai/generate (fallback template)
-	req4 := httptest.NewRequest(http.MethodPost, "/api/v1/ai/generate", strings.NewReader(`{"topic":"Chuyển đổi số AI"}`))
+	req4 := httptest.NewRequest(http.MethodPost, "/api/v1/ai/generate", strings.NewReader(`{"topic":"AI Digital Transformation"}`))
 	rec4 := httptest.NewRecorder()
 	handler.ServeHTTP(rec4, req4)
 	if rec4.Code != http.StatusOK {

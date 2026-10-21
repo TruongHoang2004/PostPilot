@@ -14,8 +14,8 @@ import (
 	"time"
 )
 
-// S3Service hỗ trợ tạo Presigned PUT URL chuẩn AWS Signature V4
-// tương thích với cả MinIO (Local Docker), AWS S3 và Cloudflare R2.
+// S3Service generates AWS Signature V4 presigned PUT URLs
+// compatible with MinIO (local Docker), AWS S3, and Cloudflare R2.
 type S3Service struct {
 	Endpoint      string
 	PublicBaseURL string
@@ -25,7 +25,7 @@ type S3Service struct {
 	SecretKey     string
 }
 
-// NewS3Service khởi tạo dịch vụ lưu trữ Media S3/MinIO.
+// NewS3Service initializes the S3/MinIO media storage service.
 func NewS3Service(endpoint, publicBaseURL, region, bucket, accessKey, secretKey string) *S3Service {
 	return &S3Service{
 		Endpoint:      strings.TrimRight(endpoint, "/"),
@@ -37,7 +37,7 @@ func NewS3Service(endpoint, publicBaseURL, region, bucket, accessKey, secretKey 
 	}
 }
 
-// PresignedUploadResult chứa thông tin trả về cho Frontend upload trực tiếp lên S3/MinIO.
+// PresignedUploadResult contains presigned upload metadata for direct client uploads.
 type PresignedUploadResult struct {
 	StorageKey string `json:"storage_key"`
 	UploadURL  string `json:"upload_url"`
@@ -45,10 +45,10 @@ type PresignedUploadResult struct {
 	ExpiresIn  int    `json:"expires_in_seconds"`
 }
 
-// GeneratePresignedPutURL tạo đường dẫn có chữ ký AWS SigV4 để client upload file trực tiếp.
+// GeneratePresignedPutURL creates an AWS SigV4 signed URL for direct file upload.
 func (s *S3Service) GeneratePresignedPutURL(fileName string, expiresSeconds int) (*PresignedUploadResult, error) {
 	if expiresSeconds <= 0 {
-		expiresSeconds = 900 // 15 phút
+		expiresSeconds = 900 // 15 minutes
 	}
 	now := time.Now().UTC()
 	amzDate := now.Format("20060102T150405Z")
@@ -109,7 +109,7 @@ func (s *S3Service) GeneratePresignedPutURL(fileName string, expiresSeconds int)
 	}, nil
 }
 
-// Upload gửi trực tiếp file stream lên S3/MinIO thông qua Presigned PUT URL.
+// Upload streams a file directly to S3/MinIO via a presigned PUT URL.
 func (s *S3Service) Upload(ctx context.Context, fileName, contentType string, data io.Reader, size int64) (string, string, error) {
 	presigned, err := s.GeneratePresignedPutURL(fileName, 900)
 	if err != nil {

@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Migration: 000003_refactor_channels_schema (DOWN)
--- Description: Rollback cấu trúc bảng channels về facebook_pages
+-- Description: Rollback channels schema back to facebook_pages
 -- ============================================================================
 
 ALTER TABLE webhook_events RENAME COLUMN external_id TO page_id;

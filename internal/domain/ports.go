@@ -6,8 +6,8 @@ import (
 	"sync"
 )
 
-// PublisherError trừu tượng hóa lỗi trả về từ bất kỳ Adapter mạng xã hội nào (Facebook, LinkedIn, X, TikTok,...),
-// giúp Core Domain & Worker quyết định Retry hay vô hiệu hóa Token mà không cần biết chi tiết nền tảng.
+// PublisherError abstracts errors returned by any social platform adapter (Facebook, LinkedIn, X, TikTok,...),
+// enabling Core Domain & Worker to decide retry strategies or token invalidation without platform coupling.
 type PublisherError interface {
 	error
 	ErrorCode() int
@@ -17,7 +17,7 @@ type PublisherError interface {
 	IsRateLimited() bool
 }
 
-// PublishStepOutcome ghi lại kết quả thực thi của một bước gọi API lên nền tảng đích.
+// PublishStepOutcome records execution metrics and results of an individual API call to the target platform.
 type PublishStepOutcome struct {
 	Action         string
 	RequestSummary string
@@ -27,21 +27,21 @@ type PublishStepOutcome struct {
 	Error          error
 }
 
-// PublishRequest chứa thông tin chuẩn hóa để Adapter thực hiện đăng bài.
+// PublishRequest contains standardized parameters for an adapter to execute publishing.
 type PublishRequest struct {
 	Channel     Channel
 	AccessToken string
 	Post        *Post
 }
 
-// PublishResult chứa kết quả trả về sau khi Adapter xuất bản bài viết lên nền tảng đích.
+// PublishResult contains the outcome after an adapter publishes a post to the target platform.
 type PublishResult struct {
 	ExternalPostID string
 	Steps          []PublishStepOutcome
 	FinalRateLimit RateLimitUsage
 }
 
-// TokenHealthResult phản ánh trạng thái sống/chết của Credential trên nền tảng đích.
+// TokenHealthResult reflects credential validity and expiration on the target platform.
 type TokenHealthResult struct {
 	IsValid   bool
 	ExpiresAt int64
@@ -49,25 +49,25 @@ type TokenHealthResult struct {
 	RawInfo   any
 }
 
-// PublisherPort là Output Port (Contract) mà mọi Social Platform Adapter phải triển khai.
+// PublisherPort is the Outbound Port contract implemented by each social platform adapter.
 type PublisherPort interface {
-	// Platform trả về định danh nền tảng mà Adapter này phục vụ (VD: FACEBOOK).
+	// Platform returns the platform identifier serviced by this adapter (e.g. FACEBOOK).
 	Platform() PlatformType
 
-	// Publish thực thi xuất bản bài viết lên Kênh đích.
+	// Publish executes post publishing to the target channel.
 	Publish(ctx context.Context, req PublishRequest) (*PublishResult, error)
 
-	// VerifyToken kiểm tra tính hợp lệ của Access Token trên nền tảng đích.
+	// VerifyToken checks the validity and scopes of the access token on the target platform.
 	VerifyToken(ctx context.Context, accessToken string) (*TokenHealthResult, error)
 }
 
-// PublisherRegistry quản lý danh sách các PublisherPort theo từng nền tảng (Multi-platform Adapter Registry).
+// PublisherRegistry manages multi-platform publishing adapters.
 type PublisherRegistry struct {
 	mu         sync.RWMutex
 	publishers map[PlatformType]PublisherPort
 }
 
-// NewPublisherRegistry khởi tạo bộ đăng ký Adapter xuất bản.
+// NewPublisherRegistry initializes an adapter registry.
 func NewPublisherRegistry(adapters ...PublisherPort) *PublisherRegistry {
 	r := &PublisherRegistry{
 		publishers: make(map[PlatformType]PublisherPort),
@@ -80,7 +80,7 @@ func NewPublisherRegistry(adapters ...PublisherPort) *PublisherRegistry {
 	return r
 }
 
-// Register đăng ký một Adapter cho nền tảng tương ứng.
+// Register registers an adapter for its supported platform.
 func (r *PublisherRegistry) Register(adapter PublisherPort) {
 	if adapter == nil {
 		return
@@ -90,7 +90,7 @@ func (r *PublisherRegistry) Register(adapter PublisherPort) {
 	r.publishers[NormalizePlatform(adapter.Platform())] = adapter
 }
 
-// Get trả về Adapter tương ứng với nền tảng của Channel.
+// Get returns the adapter registered for the given platform.
 func (r *PublisherRegistry) Get(platform PlatformType) (PublisherPort, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

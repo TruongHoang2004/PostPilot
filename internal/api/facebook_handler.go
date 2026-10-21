@@ -9,11 +9,11 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/happy-darwin/fb-autoposter/internal/crypto"
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/crypto"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
 
-// handleFBOAuthLogin khởi tạo URL đăng nhập OAuth2 cho Facebook Adapter.
+// handleFBOAuthLogin initializes the OAuth2 authorization URL for the Facebook Adapter.
 func (s *Server) handleFBOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	if s.fbClient == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
@@ -23,7 +23,7 @@ func (s *Server) handleFBOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.cfg.FBAppID == "" || s.cfg.FBAppID == "your_facebook_app_id" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": "FB_APP_ID chưa được cấu hình trong file .env",
+			"error": "FB_APP_ID is not configured in .env",
 		})
 		return
 	}
@@ -33,7 +33,7 @@ func (s *Server) handleFBOAuthLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleFBOAuthCallback xử lý OAuth2 callback từ Meta và lưu các Fanpage thành các `domain.Channel`.
+// handleFBOAuthCallback processes OAuth2 callback from Meta and maps Fanpages to `domain.Channel`.
 func (s *Server) handleFBOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	code := r.URL.Query().Get("code")
@@ -76,8 +76,8 @@ func (s *Server) handleFBOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("%s/?oauth=success&count=%d", targetHost, len(savedChannels)), http.StatusTemporaryRedirect)
 }
 
-// handleFBExchangeUserToken nhận `short_lived_user_token` và đổi sang Permanent Page Access Token,
-// ánh xạ các trang quản trị thành các `domain.Channel` có `Platform = FACEBOOK`.
+// handleFBExchangeUserToken receives `short_lived_user_token` and exchanges it for Permanent Page Access Tokens,
+// mapping managed pages into `domain.Channel` with `Platform = FACEBOOK`.
 func (s *Server) handleFBExchangeUserToken(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ShortLivedUserToken string `json:"short_lived_user_token"`
@@ -94,7 +94,7 @@ func (s *Server) handleFBExchangeUserToken(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"message":        "Đã đồng bộ và mã hóa Permanent Channel Access Token thành công",
+		"message":        "Permanent Channel Access Tokens synchronized and encrypted successfully",
 		"imported_count": len(savedChannels),
 		"channels":       savedChannels,
 	})
@@ -142,7 +142,7 @@ func (s *Server) exchangeAndSaveFacebookChannels(ctx context.Context, shortUserT
 	return savedChannels, nil
 }
 
-// handleFBWebhookVerify xác thực Meta Webhook (`hub.challenge`).
+// handleFBWebhookVerify verifies Meta Webhook challenge (`hub.challenge`).
 func (s *Server) handleFBWebhookVerify(w http.ResponseWriter, r *http.Request) {
 	mode := r.URL.Query().Get("hub.mode")
 	token := r.URL.Query().Get("hub.verify_token")
@@ -156,7 +156,7 @@ func (s *Server) handleFBWebhookVerify(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusForbidden)
 }
 
-// handleFBWebhookEvent tiếp nhận sự kiện Webhook từ Meta.
+// handleFBWebhookEvent receives webhook event payloads from Meta.
 func (s *Server) handleFBWebhookEvent(w http.ResponseWriter, r *http.Request) {
 	var payload map[string]any
 	_ = json.NewDecoder(r.Body).Decode(&payload)

@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-// GraphAPIError đại diện cho cấu trúc lỗi trả về từ Meta Graph API.
+// GraphAPIError represents an error response structure returned by Meta Graph API.
 type GraphAPIError struct {
 	HTTPStatus   int    `json:"http_status"`
 	Message      string `json:"message"`
@@ -21,25 +21,24 @@ func (e *GraphAPIError) Error() string {
 		e.HTTPStatus, e.Code, e.ErrorSubcode, e.Type, e.FBTraceID, e.Message)
 }
 
-// ErrorCode trả về mã lỗi chuẩn từ nền tảng (triển khai domain.PublisherError).
+// ErrorCode returns the standardized error code from the platform (implements domain.PublisherError).
 func (e *GraphAPIError) ErrorCode() int {
 	return e.Code
 }
 
-// Subcode trả về mã lỗi phụ từ nền tảng.
+// Subcode returns the secondary subcode from the platform.
 func (e *GraphAPIError) Subcode() int {
 	return e.ErrorSubcode
 }
 
-
-// IsTokenInvalid kiểm tra xem lỗi có phải do Page Access Token hết hạn, đổi mật khẩu hoặc bị thu hồi quyền không.
-// Theo tài liệu Meta: Code 190 (OAuthException) hoặc Code 102 (Session key invalid).
+// IsTokenInvalid checks if the error indicates an expired, revoked, or invalid access token.
+// Per Meta documentation: Code 190 (OAuthException) or Code 102 (Session key invalid).
 func (e *GraphAPIError) IsTokenInvalid() bool {
 	return e.Code == 190 || e.Code == 102
 }
 
-// IsRateLimited kiểm tra xem lỗi có phải do chạm ngưỡng giới hạn tần suất (Rate Limit) của Meta hay không.
-// Code 4 (App rate limit), 17 (User request limit), 32 (Page request limit), 613 (Calls to this api have exceeded the rate limit), 80001 (Page level throttling).
+// IsRateLimited checks if the error is due to hitting Meta rate limits or throttling.
+// Code 4 (App rate limit), 17 (User request limit), 32 (Page request limit), 613 (Calls exceeded), 80001 (Page throttling).
 func (e *GraphAPIError) IsRateLimited() bool {
 	switch e.Code {
 	case 4, 17, 32, 613, 80001:
@@ -49,17 +48,17 @@ func (e *GraphAPIError) IsRateLimited() bool {
 	}
 }
 
-// IsRetryable quyết định xem Worker có nên thử đăng lại (Exponential Backoff Retry) hay dừng hẳn.
+// IsRetryable determines whether the worker should retry with exponential backoff or fail permanently.
 func (e *GraphAPIError) IsRetryable() bool {
-	// Lỗi Token (190) hoặc lỗi thiếu quyền (10, 200) hoặc bị chặn nội dung spam (368) -> KHÔNG RETRY
+	// Token error (190), permission denied (10, 200-299), or spam block (368) -> DO NOT RETRY
 	if e.IsTokenInvalid() || e.Code == 10 || (e.Code >= 200 && e.Code < 300) || e.Code == 368 {
 		return false
 	}
-	// Rate limit -> Nên Retry sau khoảng thời gian chờ dài hơn
+	// Rate limit -> Should retry after a backoff delay
 	if e.IsRateLimited() {
 		return true
 	}
-	// Lỗi tạm thời từ phía Meta (Code 1: Unknown, Code 2: Service temporarily unavailable) hoặc HTTP 5xx
+	// Transient errors from Meta (Code 1: Unknown, Code 2: Service temporarily unavailable) or HTTP 5xx
 	if e.Code == 1 || e.Code == 2 || e.HTTPStatus >= 500 {
 		return true
 	}

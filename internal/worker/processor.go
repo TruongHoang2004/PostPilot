@@ -8,18 +8,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/config"
-	"github.com/happy-darwin/fb-autoposter/internal/crypto"
-	"github.com/happy-darwin/fb-autoposter/internal/database"
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
-	"github.com/happy-darwin/fb-autoposter/internal/facebook"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/notifier"
-	"github.com/happy-darwin/fb-autoposter/internal/infra/redis"
+	"github.com/TruongHoang2004/PostPilot/internal/config"
+	"github.com/TruongHoang2004/PostPilot/internal/crypto"
+	"github.com/TruongHoang2004/PostPilot/internal/database"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
+	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
 )
 
-// Processor quản lý đội ngũ Worker tiêu thụ hàng đợi `FAST` và `HEAVY`,
-// thực thi xuất bản bài viết thông qua Output Port `domain.PublisherRegistry`,
-// kiểm soát Rate Limit và Exponential Backoff Retry độc lập nền tảng.
+// Processor manages worker pools consuming from `FAST` and `HEAVY` queues,
+// executing post publishing via Output Port `domain.PublisherRegistry`,
+// and enforcing rate limiting and exponential backoff retries across platforms.
 type Processor struct {
 	cfg      *config.Config
 	store    database.Store
@@ -54,7 +54,7 @@ func NewProcessor(
 	}
 }
 
-// WithPublisherRegistry cho phép tiêm (inject) bộ đăng ký Adapter đa nền tảng tùy chỉnh.
+// WithPublisherRegistry allows injecting a custom multi-platform adapter registry.
 func (p *Processor) WithPublisherRegistry(reg *domain.PublisherRegistry) *Processor {
 	if reg != nil {
 		p.registry = reg
@@ -62,7 +62,7 @@ func (p *Processor) WithPublisherRegistry(reg *domain.PublisherRegistry) *Proces
 	return p
 }
 
-// Start khởi chạy các goroutine worker cho cả 2 hàng đợi FAST và HEAVY.
+// Start launches worker goroutines for both FAST and HEAVY queues.
 func (p *Processor) Start(ctx context.Context, wg *sync.WaitGroup) {
 	for i := 1; i <= p.cfg.FastWorkerConcurrency; i++ {
 		wg.Add(1)
@@ -110,12 +110,12 @@ func (p *Processor) workerLoop(ctx context.Context, workerName string, tier stri
 	}
 }
 
-// ProcessPostByID thực hiện toàn bộ quy trình đăng 1 bài viết lên Kênh đích (Channel):
-// 1. Tải thông tin Post & Channel từ DB.
-// 2. Kiểm tra Rate-Limit hiện tại của Channel trên Redis. Nếu > ngưỡng an toàn (80%), tự động hoãn 5 phút.
-// 3. Giải mã Access Token bằng AES-256-GCM.
-// 4. Lấy Adapter tương ứng với Platform từ `PublisherRegistry` và gọi `Publish`.
-// 5. Ghi nhận `publish_logs`, cập nhật Rate Limit và xử lý Retry hoặc bắn cảnh báo Telegram.
+// ProcessPostByID executes the end-to-end publishing flow for a post to its target channel:
+// 1. Load Post & Channel from database.
+// 2. Check channel rate limits on Redis. If > threshold (e.g. 80%), postpone for 5 minutes.
+// 3. Decrypt Access Token in memory via AES-256-GCM.
+// 4. Resolve the platform adapter from `PublisherRegistry` and invoke `Publish`.
+// 5. Persist `publish_logs`, update rate limits, and handle retries or Telegram alerts.
 func (p *Processor) ProcessPostByID(ctx context.Context, postID string) error {
 	post, err := p.store.GetPostByID(ctx, postID)
 	if err != nil {
@@ -137,7 +137,7 @@ func (p *Processor) ProcessPostByID(ctx context.Context, postID string) error {
 		return errors.New(errMsg)
 	}
 
-	// Kiểm tra Rate-Limit từ Redis trước khi gọi Adapter
+	// Check rate limit cache on Redis before calling the adapter
 	cachedUsage, _ := p.redis.GetChannelRateLimit(ctx, channel.ExternalID)
 	if cachedUsage.MaxPercent() >= p.cfg.RateLimitThresholdPercent {
 		delayUntil := time.Now().UTC().Add(5 * time.Minute)
@@ -156,7 +156,7 @@ func (p *Processor) ProcessPostByID(ctx context.Context, postID string) error {
 		return err
 	}
 
-	// Giải mã Access Token trong RAM
+	// Decrypt Access Token in memory
 	accessToken, err := p.cipher.Decrypt(channel.EncryptedAccessToken)
 	if err != nil {
 		_ = p.store.MarkPostFailedOrRetry(ctx, post.ID, post.RetryCount, nil, domain.PostStatusFailed, 0, "token decryption error: "+err.Error())
@@ -170,7 +170,7 @@ func (p *Processor) ProcessPostByID(ctx context.Context, postID string) error {
 		Post:        post,
 	})
 
-	// Lưu toàn bộ các bước gọi API vào bảng publish_logs
+	// Record all API execution steps into publish_logs table
 	if outcome != nil {
 		for _, step := range outcome.Steps {
 			logEntry := &domain.PublishLog{
@@ -191,7 +191,7 @@ func (p *Processor) ProcessPostByID(ctx context.Context, postID string) error {
 			_ = p.store.InsertPublishLog(ctx, logEntry)
 		}
 
-		// Cập nhật thông số Rate Limit mới nhất từ Adapter
+		// Update latest rate limit metrics from the adapter
 		if outcome.FinalRateLimit.MaxPercent() > 0 {
 			_ = p.redis.SaveChannelRateLimit(ctx, channel.ExternalID, outcome.FinalRateLimit)
 			_ = p.store.UpdateChannelRateLimit(ctx, channel.ID, outcome.FinalRateLimit)
@@ -212,7 +212,7 @@ func (p *Processor) ProcessPostByID(ctx context.Context, postID string) error {
 		return nil
 	}
 
-	// Xử lý phân loại lỗi & tính toán Exponential Backoff Retry
+	// Handle error classification and exponential backoff retry
 	return p.handlePublishFailure(ctx, post, *channel, attemptNumber, pubErr)
 }
 
@@ -234,13 +234,13 @@ func (p *Processor) handlePublishFailure(ctx context.Context, post *domain.Post,
 			_ = p.store.UpdateChannelTokenStatus(ctx, channel.ID, domain.TokenStatusExpired, now)
 			_ = p.notifier.SendAlert(
 				ctx,
-				"Token Kênh Xuất Bản Hết Hạn Khi Đang Đăng Bài",
-				fmt.Sprintf("Kênh: *%s* (`%s` - `%s`)\nBài viết ID: `%s`\nChi tiết: %s", channel.Name, channel.ExternalID, channel.Platform, post.ID, platErr.Error()),
+				"Channel Access Token Expired During Publishing",
+				fmt.Sprintf("Channel: *%s* (`%s` - `%s`)\nPost ID: `%s`\nDetails: %s", channel.Name, channel.ExternalID, channel.Platform, post.ID, platErr.Error()),
 			)
 		}
 	}
 
-	// Nếu lỗi có thể thử lại (Retryable) và chưa vượt quá max_retries
+	// If retryable error and attempt count has not exceeded max_retries
 	if isRetryable && attempt < post.MaxRetries {
 		backoffDuration := ComputeBackoffDuration(attempt)
 		nextRetry := time.Now().UTC().Add(backoffDuration)
@@ -254,21 +254,21 @@ func (p *Processor) handlePublishFailure(ctx context.Context, post *domain.Post,
 		return pubErr
 	}
 
-	// Dừng hẳn (Permanent Failure) -> Cập nhật trạng thái FAILED và gửi cảnh báo Telegram
+	// Permanent Failure -> Mark post FAILED and send Telegram alert
 	_ = p.store.MarkPostFailedOrRetry(ctx, post.ID, attempt, nil, domain.PostStatusFailed, errCode, pubErr.Error())
 	_ = p.notifier.SendAlert(
 		ctx,
-		"Đăng Bài Tự Động Thất Bại Vĩnh Viễn",
-		fmt.Sprintf("Kênh: *%s* (`%s`)\nBài viết ID: `%s`\nSố lần thử: `%d/%d`\nLỗi: `%s`",
+		"Auto-Publishing Failed Permanently",
+		fmt.Sprintf("Channel: *%s* (`%s`)\nPost ID: `%s`\nAttempt: `%d/%d`\nError: `%s`",
 			channel.Name, channel.ExternalID, post.ID, attempt, post.MaxRetries, pubErr.Error()),
 	)
 	return pubErr
 }
 
-// ComputeBackoffDuration tính thời gian chờ Exponential Backoff:
-// Lần 1 lỗi -> chờ 1 phút
-// Lần 2 lỗi -> chờ 5 phút
-// Lần 3+ lỗi -> chờ 15 phút
+// ComputeBackoffDuration calculates exponential backoff duration:
+// Attempt 1 -> 1 minute
+// Attempt 2 -> 5 minutes
+// Attempt 3+ -> 15 minutes
 func ComputeBackoffDuration(attempt int) time.Duration {
 	switch attempt {
 	case 1:

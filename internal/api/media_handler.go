@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
 
-// handleMediaUpload xử lý tải file ảnh/video trực tiếp lên server và đồng bộ S3/MinIO (nếu cấu hình).
+// handleMediaUpload handles direct file uploads for images/videos and syncs to S3/MinIO (if configured).
 func (s *Server) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(50 << 20); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "file too large or invalid multipart form: " + err.Error()})
@@ -77,7 +77,7 @@ func (s *Server) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"message":     "Upload media thành công",
+		"message":     "Media uploaded successfully",
 		"public_url":  publicURL,
 		"storage_key": storageKey,
 		"file_name":   header.Filename,
@@ -87,7 +87,7 @@ func (s *Server) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePresignUpload sinh đường dẫn Presigned PUT URL chuẩn AWS Signature V4.
+// handlePresignUpload generates AWS Signature V4 presigned PUT URLs for direct client uploads.
 func (s *Server) handlePresignUpload(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		FileName      string `json:"file_name"`

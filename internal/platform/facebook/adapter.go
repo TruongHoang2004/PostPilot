@@ -3,7 +3,7 @@ package facebook
 import (
 	"context"
 
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
 
 // Ensure compile-time conformance to Core Domain Ports.
@@ -12,28 +12,28 @@ var (
 	_ domain.PublisherError = (*GraphAPIError)(nil)
 )
 
-// PublisherAdapter đóng vai trò Secondary Adapter (Hexagonal Architecture),
-// kết nối Core Domain "Post & Publishing" với Meta Graph API.
+// PublisherAdapter acts as a Secondary Adapter (Hexagonal Architecture),
+// connecting the Core Domain "Post & Publishing" to Meta Graph API.
 type PublisherAdapter struct {
 	client *Client
 }
 
-// NewPublisherAdapter khởi tạo Facebook Adapter triển khai domain.PublisherPort.
+// NewPublisherAdapter initializes a Facebook Adapter implementing domain.PublisherPort.
 func NewPublisherAdapter(client *Client) *PublisherAdapter {
 	return &PublisherAdapter{client: client}
 }
 
-// Client trả về Graph API HTTP Client bên dưới (phục vụ các luồng đặc thù của Facebook như OAuth2).
+// Client returns the underlying Graph API HTTP Client.
 func (a *PublisherAdapter) Client() *Client {
 	return a.client
 }
 
-// Platform trả về định danh nền tảng FACEBOOK.
+// Platform returns the FACEBOOK platform identifier.
 func (a *PublisherAdapter) Platform() domain.PlatformType {
 	return domain.PlatformFacebook
 }
 
-// Publish chuyển đổi yêu cầu xuất bản trừu tượng từ Core Domain thành các lệnh gọi Meta Graph API.
+// Publish transforms generic publish requests from the Core Domain into Meta Graph API calls.
 func (a *PublisherAdapter) Publish(ctx context.Context, req domain.PublishRequest) (*domain.PublishResult, error) {
 	outcome, err := a.client.PublishPost(ctx, req.Channel.ExternalID, req.AccessToken, req.Post)
 	if outcome == nil {
@@ -59,7 +59,7 @@ func (a *PublisherAdapter) Publish(ctx context.Context, req domain.PublishReques
 	}, err
 }
 
-// VerifyToken kiểm tra sức khỏe Access Token của Kênh Facebook thông qua endpoint /debug_token.
+// VerifyToken verifies the validity and scopes of a Facebook Page Access Token via /debug_token.
 func (a *PublisherAdapter) VerifyToken(ctx context.Context, accessToken string) (*domain.TokenHealthResult, error) {
 	info, err := a.client.DebugToken(ctx, accessToken, "")
 	if err != nil {

@@ -1,6 +1,6 @@
 -- ============================================================================
 -- Migration: 000001_init_schema (DOWN)
--- Description: Rollback các bảng cốt lõi
+-- Description: Rollback core tables
 -- ============================================================================
 
 DROP TABLE IF EXISTS publish_logs;

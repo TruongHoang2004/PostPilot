@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
 
-// Store định nghĩa Output Port lưu trữ dữ liệu cho toàn bộ hệ thống.
+// Store defines the storage Output Port interface for the entire system.
 type Store interface {
-	// Quản lý Kênh xuất bản (Channels)
+	// Channel Management
 	UpsertChannel(ctx context.Context, channel *domain.Channel) (*domain.Channel, error)
 	ListChannels(ctx context.Context) ([]domain.Channel, error)
 	GetChannelByID(ctx context.Context, id string) (*domain.Channel, error)
@@ -25,7 +25,7 @@ type Store interface {
 	UpdateChannelTokenStatus(ctx context.Context, id string, status string, checkedAt time.Time) error
 	UpdateChannelRateLimit(ctx context.Context, id string, usage domain.RateLimitUsage) error
 
-	// Quản lý Bài viết & Lập lịch (Post & Publishing Core)
+	// Post & Publishing Management (Core Domain)
 	CreatePost(ctx context.Context, post *domain.Post) (*domain.Post, error)
 	GetPostByID(ctx context.Context, id string) (*domain.Post, error)
 	ListPosts(ctx context.Context, statusFilter string, limit int) ([]domain.Post, error)
@@ -35,19 +35,19 @@ type Store interface {
 	MarkPostFailedOrRetry(ctx context.Context, postID string, retryCount int, nextRetryAt *time.Time, finalStatus string, errCode int, errMsg string) error
 	CancelPost(ctx context.Context, postID string) error
 
-	// Quản lý Audit Log & Media Assets
+	// Audit Logs & Media Assets
 	InsertPublishLog(ctx context.Context, logEntry *domain.PublishLog) error
 	ListPublishLogsByPost(ctx context.Context, postID string) ([]domain.PublishLog, error)
 	CreateMediaAsset(ctx context.Context, asset *domain.MediaAsset) (*domain.MediaAsset, error)
 	GetSystemStats(ctx context.Context) (*domain.SystemStats, error)
 }
 
-// PostgresStore triển khai Store sử dụng PostgreSQL.
+// PostgresStore implements Store backed by PostgreSQL.
 type PostgresStore struct {
 	db *sql.DB
 }
 
-// NewPostgresStore khởi tạo repository kết nối tới PostgreSQL.
+// NewPostgresStore initializes a PostgreSQL repository.
 func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
@@ -117,6 +117,9 @@ func (s *PostgresStore) ListChannels(ctx context.Context) ([]domain.Channel, err
 		c.CreatedAt = parsePGTime(createdStr)
 		c.UpdatedAt = parsePGTime(updatedAtOrCreated(updatedStr, createdStr))
 		channels = append(channels, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return channels, nil
 }
@@ -322,8 +325,8 @@ func (s *PostgresStore) ListPosts(ctx context.Context, statusFilter string, limi
 	return list, nil
 }
 
-// ClaimDuePosts sử dụng cơ chế `SELECT ... FOR UPDATE SKIP LOCKED` của PostgreSQL
-// để đảm bảo khi chạy nhiều instance Scheduler/Worker song song không bao giờ lấy trùng 1 bài đăng.
+// ClaimDuePosts uses PostgreSQL's `SELECT ... FOR UPDATE SKIP LOCKED`
+// to ensure concurrent Scheduler/Worker instances never claim duplicate posts.
 func (s *PostgresStore) ClaimDuePosts(ctx context.Context, now time.Time, batchSize int) ([]domain.Post, error) {
 	query := `
 	WITH due AS (
@@ -357,6 +360,9 @@ func (s *PostgresStore) ClaimDuePosts(ctx context.Context, now time.Time, batchS
 		p.RetryCount, _ = strconv.Atoi(retryStr)
 		p.Status = domain.PostStatusQueued
 		claimed = append(claimed, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return claimed, nil
 }
@@ -458,6 +464,9 @@ func (s *PostgresStore) ListPublishLogsByPost(ctx context.Context, postID string
 		l.CreatedAt = parsePGTime(createdStr)
 		logs = append(logs, l)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return logs, nil
 }
 
@@ -528,7 +537,7 @@ func parsePGTime(raw string) time.Time {
 }
 
 // ============================================================================
-// InMemoryStore: Dùng cho Unit Test hoặc chạy Demo độc lập khi chưa bật Docker
+// InMemoryStore: Used for unit testing and offline demo execution
 // ============================================================================
 
 type InMemoryStore struct {

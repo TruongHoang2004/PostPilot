@@ -12,17 +12,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
 
-// Client đóng gói toàn bộ giao tiếp HTTP với Meta Graph API.
+// Client encapsulates HTTP communication with Meta Graph API.
 type Client struct {
 	baseURL    string
 	version    string
 	httpClient *http.Client
 }
 
-// CallMetrics ghi lại thông tin chi tiết của 1 lần gọi API sang Meta để lưu vào bảng publish_logs.
+// CallMetrics records details of a single API call to Meta to persist in publish_logs.
 type CallMetrics struct {
 	HTTPStatus     int
 	RawResponse    string
@@ -30,7 +30,7 @@ type CallMetrics struct {
 	RateLimitUsage domain.RateLimitUsage
 }
 
-// NewClient khởi tạo Meta Graph API Client.
+// NewClient initializes a Meta Graph API Client.
 func NewClient(baseURL, version string) *Client {
 	if baseURL == "" {
 		baseURL = "https://graph.facebook.com"
@@ -47,7 +47,7 @@ func NewClient(baseURL, version string) *Client {
 	}
 }
 
-// WithHTTPClient cho phép cấu hình *http.Client hoặc RoundTripper tùy chỉnh (hữu ích cho Unit Test hoặc Proxy).
+// WithHTTPClient configures a custom *http.Client or RoundTripper (useful for testing or proxies).
 func (c *Client) WithHTTPClient(hc *http.Client) *Client {
 	if hc != nil {
 		c.httpClient = hc
@@ -58,15 +58,15 @@ func (c *Client) WithHTTPClient(hc *http.Client) *Client {
 func (c *Client) endpoint(path string) string {
 	path = strings.TrimLeft(path, "/")
 	base := c.baseURL
-	// Theo chuẩn Meta Graph API, các endpoint upload video (/{page_id}/videos)
-	// bắt buộc phải gửi qua miền graph-video.facebook.com thay vì graph.facebook.com.
+	// Per Meta Graph API specs, video upload endpoints (/{page_id}/videos)
+	// must be routed to graph-video.facebook.com instead of graph.facebook.com.
 	if base == "https://graph.facebook.com" && strings.HasSuffix(path, "/videos") {
 		base = "https://graph-video.facebook.com"
 	}
 	return fmt.Sprintf("%s/%s/%s", base, c.version, path)
 }
 
-// PostForm gửi request POST dạng application/x-www-form-urlencoded tới Meta Graph API.
+// PostForm sends an application/x-www-form-urlencoded POST request to Meta Graph API.
 func (c *Client) PostForm(ctx context.Context, path string, form url.Values) (map[string]any, CallMetrics, error) {
 	start := time.Now()
 	fullURL := c.endpoint(path)
@@ -80,7 +80,7 @@ func (c *Client) PostForm(ctx context.Context, path string, form url.Values) (ma
 	return c.doRequest(req, start)
 }
 
-// PostJSON gửi request POST dạng application/json tới Meta Graph API.
+// PostJSON sends an application/json POST request to Meta Graph API.
 func (c *Client) PostJSON(ctx context.Context, path string, payload map[string]any, extraHeaders map[string]string) (map[string]any, CallMetrics, error) {
 	start := time.Now()
 	fullURL := c.endpoint(path)
@@ -102,7 +102,7 @@ func (c *Client) PostJSON(ctx context.Context, path string, payload map[string]a
 	return c.doRequest(req, start)
 }
 
-// PostMultipartChunk gửi 1 phân mảnh (chunk) dữ liệu nhị phân trong luồng Chunked Video Upload.
+// PostMultipartChunk uploads a single binary chunk during chunked video uploads.
 func (c *Client) PostMultipartChunk(ctx context.Context, path string, fields map[string]string, fieldName, fileName string, chunkData []byte) (map[string]any, CallMetrics, error) {
 	start := time.Now()
 	fullURL := c.endpoint(path)
@@ -132,7 +132,7 @@ func (c *Client) PostMultipartChunk(ctx context.Context, path string, fields map
 	return c.doRequest(req, start)
 }
 
-// Get gửi request GET kèm query params tới Meta Graph API.
+// Get sends a GET request with query params to the Meta Graph API.
 func (c *Client) Get(ctx context.Context, path string, query url.Values) (map[string]any, CallMetrics, error) {
 	start := time.Now()
 	fullURL := c.endpoint(path)
@@ -177,14 +177,14 @@ func (c *Client) doRequest(req *http.Request, start time.Time) (map[string]any, 
 	return parsed, metrics, nil
 }
 
-// ParseRateLimitHeaders đọc thông số giới hạn tần suất từ header `X-Page-Usage` hoặc `X-App-Usage` của Meta.
-// Ví dụ header: `{"call_count":28,"total_cputime":15,"total_time":22}`
+// ParseRateLimitHeaders reads rate limit usage metrics from Meta's X-Page-Usage or X-App-Usage headers.
+// Example header: `{"call_count":28,"total_cputime":15,"total_time":22}`
 func ParseRateLimitHeaders(h http.Header) domain.RateLimitUsage {
 	var usage domain.RateLimitUsage
 
 	pageHeader := h.Get("X-Page-Usage")
 	if pageHeader != "" {
-		// X-Page-Usage đôi khi có dạng map theo page_id hoặc trực tiếp object
+		// X-Page-Usage can be a JSON object or a map keyed by page_id
 		if err := json.Unmarshal([]byte(pageHeader), &usage); err == nil && usage.MaxPercent() > 0 {
 			return usage
 		}

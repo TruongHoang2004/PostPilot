@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/happy-darwin/fb-autoposter/internal/domain"
+	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
 
 type handlerRoundTripper struct {
@@ -60,7 +60,7 @@ func TestPublishPhotoAlbumAndRateLimitParsing(t *testing.T) {
 
 	post := &domain.Post{
 		MediaType: domain.MediaTypeAlbum,
-		Content:   "Bộ sưu tập mùa thu 2026",
+		Content:   "Autumn 2026 Collection",
 		MediaURLs: []string{
 			"https://cdn.example.com/img1.jpg",
 			"https://cdn.example.com/img2.jpg",

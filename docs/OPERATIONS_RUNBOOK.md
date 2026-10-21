@@ -22,7 +22,7 @@ Tài liệu này hướng dẫn cách vận hành, giám sát, xử lý sự c�
 
 ## 2. Bảng Tra cứu Mã lỗi & Cách Hệ thống Tự Xử lý (qua `PublisherError`)
 
-Adapter Facebook (`internal/facebook/errors.go`) cài đặt giao diện `domain.PublisherError` để Worker xử lý tự động:
+Adapter Facebook (`internal/platform/facebook/errors.go`) cài đặt giao diện `domain.PublisherError` để Worker xử lý tự động:
 
 | Mã lỗi (`error_code`) | Tên lỗi từ Meta | Phân loại (`PublisherError`) | Hành động tự động của Worker |
 | :---: | :--- | :---: | :--- |

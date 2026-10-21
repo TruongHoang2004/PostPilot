@@ -76,7 +76,7 @@ PostPilot/
 
 ## 2. Sơ Đồ Kiến Trúc DDD & Hexagonal (Ports & Adapters Graph)
 
-Trong kiến trúc mới, **`internal/domain`** là trung tâm độc lập hoàn toàn với các nền tảng mạng xã hội. `internal/worker` và `internal/api` giao tiếp với các nền tảng bên ngoài thông qua giao diện trừu tượng `domain.PublisherPort` và `domain.PublisherRegistry`. Module `internal/facebook` đóng vai trò là một **Secondary Adapter** thực thi `domain.PublisherPort`:
+Trong kiến trúc mới, **`internal/domain`** là trung tâm độc lập hoàn toàn với các nền tảng mạng xã hội. `internal/worker` và `internal/api` giao tiếp với các nền tảng bên ngoài thông qua giao diện trừu tượng `domain.PublisherPort` và `domain.PublisherRegistry`. Module `internal/platform/facebook` đóng vai trò là một **Secondary Adapter** thực thi `domain.PublisherPort`:
 
 ```mermaid
 flowchart TB
@@ -107,7 +107,7 @@ flowchart TB
     end
 
     subgraph Secondary ["Secondary Adapters (Driven)"]
-        FB_ADAPT["internal/facebook (PublisherAdapter implements PublisherPort)"]
+        FB_ADAPT["internal/platform/facebook (PublisherAdapter implements PublisherPort)"]
         DB_ADAPT["internal/database (PostgresStore & InMemoryStore)"]
         REDIS_ADAPT["internal/infra/redis (Fast/Heavy Queue & RateLimit Cache)"]
         S3_ADAPT["internal/infra/storage (MinIO / S3 SigV4)"]
