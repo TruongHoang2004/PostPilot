@@ -31,6 +31,7 @@ type Config struct {
 	FBAppSecret          string
 	FBRedirectURI        string
 	FBWebhookVerifyToken string
+	FrontendURL          string
 
 	// S3 / MinIO Media Storage
 	S3Endpoint      string
@@ -78,6 +79,7 @@ func Load() *Config {
 		FBAppSecret:          getEnv("FB_APP_SECRET", ""),
 		FBRedirectURI:        getEnv("FB_REDIRECT_URI", "http://localhost:8080/api/v1/auth/facebook/callback"),
 		FBWebhookVerifyToken: getEnv("FB_WEBHOOK_VERIFY_TOKEN", "my_secure_webhook_verify_token"),
+		FrontendURL:          strings.TrimRight(getEnv("FRONTEND_URL", "http://localhost:3000"), "/"),
 
 		S3Endpoint:      strings.TrimRight(getEnv("S3_ENDPOINT", "http://localhost:9000"), "/"),
 		S3PublicBaseURL: strings.TrimRight(getEnv("S3_PUBLIC_BASE_URL", "http://localhost:9000/fb-media"), "/"),

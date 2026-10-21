@@ -1,0 +1,136 @@
+services:
+  # --------------------------------------------------------------------------
+  # 1. PostgreSQL 16 (Dùng chung cho nhiều database/dự án trên VPS)
+  # --------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: shared-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin_secret_password}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    ports:
+      # Chỉ cho phép localhost để SSH Tunnel quản lý
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - shared_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      infra-net:
+        aliases:
+          - postgres
+
+  # --------------------------------------------------------------------------
+  # 2. Redis 7 (Cache & Queue Broker dùng chung)
+  # --------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: shared-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - shared_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      infra-net:
+        aliases:
+          - redis
+
+  # --------------------------------------------------------------------------
+  # 3. MinIO (S3-Compatible Object Storage dùng chung các bucket)
+  # --------------------------------------------------------------------------
+  minio:
+    image: quay.io/minio/aistor/minio:RELEASE.2026-09-19T17-05-25Z
+    container_name: shared-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - shared_minio_data:/data
+    networks:
+      infra-net:
+        aliases:
+          - minio
+
+  minio-init:
+    image: quay.io/minio/aistor/mc:RELEASE.2026-09-19T15-24-59Z
+    container_name: shared-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3;
+      mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin123};
+      mc mb --ignore-existing local/fb-media;
+      mc anonymous set download local/fb-media;
+      exit 0;
+      "
+    networks:
+      - infra-net
+
+  # --------------------------------------------------------------------------
+  # 4. Nginx Reverse Proxy (Cửa ngõ tiếp nhận Web Traffic toàn bộ VPS)
+  # --------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.31.7-alpine
+    container_name: shared-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    networks:
+      - infra-net
+
+  # --------------------------------------------------------------------------
+  # 5. Certbot (Quản lý cấp & tự động gia hạn SSL cho mọi domain trên VPS)
+  # --------------------------------------------------------------------------
+  certbot:
+    image: certbot/certbot:v5.8.0
+    container_name: shared-certbot
+    restart: unless-stopped
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: >
+      /bin/sh -c "
+      trap exit TERM;
+      while :; do
+        certbot renew;
+        sleep 12d & wait $${!};
+      done;
+      "
+    networks:
+      - infra-net
+
+networks:
+  infra-net:
+    name: infra-net
+    driver: bridge
+
+volumes:
+  shared_pg_data:
+    name: postpilot_pg_data
+  shared_redis_data:
+    name: postpilot_redis_data
+  shared_minio_data:
+    name: postpilot_minio_data

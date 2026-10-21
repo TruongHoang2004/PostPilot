@@ -75,8 +75,8 @@ func (s *Server) handleFBOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	fbErr := r.URL.Query().Get("error")
 	fbErrDesc := r.URL.Query().Get("error_description")
 
-	targetHost := "http://localhost:3000"
-	if r.Host != "" && strings.Contains(r.Host, "8080") && !strings.Contains(r.Host, "3000") {
+	targetHost := s.cfg.FrontendURL
+	if targetHost == "" {
 		targetHost = "http://localhost:3000"
 	}
 

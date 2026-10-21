@@ -1,6 +1,5 @@
 # Binaries
 bin/
-api
 /api
 *.exe
 *.exe~
@@ -36,3 +35,10 @@ frontend/.next/
 frontend/.env.local
 frontend/.env.*.local
 
+# SSL & Certbot
+certbot/
+
+.agents
+.aidlc
+agent-skills/
+AGENTS.md
