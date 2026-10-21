@@ -48,7 +48,7 @@ func (t *TelegramNotifier) SendAlert(ctx context.Context, title string, details 
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.botToken)
 	body := map[string]any{
 		"chat_id":    t.chatID,
-		"text":       fmt.Sprintf("🚨 *[FB Auto-Poster Alert]*\n*%s*\n\n%s", title, details),
+		"text":       fmt.Sprintf("🚨 *[PostPilot Alert]*\n*%s*\n\n%s", title, details),
 		"parse_mode": "Markdown",
 	}
 

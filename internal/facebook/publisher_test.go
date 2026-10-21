@@ -142,3 +142,60 @@ func TestGraphAPIErrorClassification(t *testing.T) {
 		t.Fatalf("code 32 must be classified as rate-limited and retryable")
 	}
 }
+
+func TestPublisherAdapter(t *testing.T) {
+	client := newMockClient(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "/debug_token") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"app_id":     "123456",
+					"is_valid":   true,
+					"expires_at": 1799999999,
+					"scopes":     []string{"pages_manage_posts"},
+				},
+			})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/feed") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "123456_fb_feed_999",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	adapter := NewPublisherAdapter(client)
+	if adapter.Platform() != domain.PlatformFacebook {
+		t.Fatalf("expected platform FACEBOOK, got %s", adapter.Platform())
+	}
+
+	// Verify Token
+	health, err := adapter.VerifyToken(context.Background(), "mock_access_token")
+	if err != nil {
+		t.Fatalf("unexpected verify token error: %v", err)
+	}
+	if !health.IsValid || health.ExpiresAt != 1799999999 {
+		t.Fatalf("unexpected token health: %+v", health)
+	}
+
+	// Publish Post via Adapter
+	res, err := adapter.Publish(context.Background(), domain.PublishRequest{
+		Channel: domain.Channel{
+			Platform:   domain.PlatformFacebook,
+			ExternalID: "123456",
+		},
+		AccessToken: "mock_token",
+		Post: &domain.Post{
+			Content:   "Testing DDD PublisherAdapter",
+			MediaType: domain.MediaTypeNone,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected publish error: %v", err)
+	}
+	if res.ExternalPostID != "123456_fb_feed_999" {
+		t.Fatalf("expected external post ID 123456_fb_feed_999, got %s", res.ExternalPostID)
+	}
+}

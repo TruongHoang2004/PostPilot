@@ -34,6 +34,8 @@ export function getStatusBadgeClass(status: string): string {
       return "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30";
     case "SCHEDULED":
     case "QUEUED":
+    case "RATE_LIMITED":
+    case "WARNING":
       return "bg-amber-500/15 text-amber-400 border border-amber-500/30";
     case "PROCESSING":
       return "bg-sky-500/15 text-sky-400 border border-sky-500/30 animate-pulse";

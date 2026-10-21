@@ -51,24 +51,25 @@ func TestSchedulerAndProcessorEndToEnd(t *testing.T) {
 	notif := notifier.NewTelegramNotifier("", "", logger)
 
 	encToken, _ := cipher.Encrypt("EAAB_permanent_page_token")
-	page, err := store.UpsertPage(context.Background(), &domain.FacebookPage{
-		PageID:               "998877",
-		PageName:             "Happy Darwin Tech Page",
+	channel, err := store.UpsertChannel(context.Background(), &domain.Channel{
+		Platform:             domain.PlatformFacebook,
+		ExternalID:           "998877",
+		Name:                 "Happy Darwin Tech Channel",
 		Category:             "Software Company",
 		EncryptedAccessToken: encToken,
 		TokenStatus:          domain.TokenStatusActive,
 		IsActive:             true,
 	})
 	if err != nil {
-		t.Fatalf("upsert page error: %v", err)
+		t.Fatalf("upsert channel error: %v", err)
 	}
 
 	post, err := store.CreatePost(context.Background(), &domain.Post{
-		PageUUID:    page.ID,
+		ChannelID:   channel.ID,
 		Content:     "Bài đăng tự động kiểm thử End-to-End bằng Golang!",
 		MediaType:   domain.MediaTypeNone,
 		Status:      domain.PostStatusScheduled,
-		ScheduledAt: time.Now().UTC().Add(-1 * time.Minute), // Đã đến giờ đăng
+		ScheduledAt: time.Now().UTC().Add(-1 * time.Minute),
 		MaxRetries:  3,
 	})
 	if err != nil {
@@ -96,12 +97,31 @@ func TestSchedulerAndProcessorEndToEnd(t *testing.T) {
 	if updatedPost.Status != domain.PostStatusPublished {
 		t.Fatalf("expected post status PUBLISHED, got %s", updatedPost.Status)
 	}
-	if updatedPost.FBPostID != "998877_112233" {
-		t.Fatalf("expected fb_post_id 998877_112233, got %s", updatedPost.FBPostID)
+	if updatedPost.ExternalPostID != "998877_112233" {
+		t.Fatalf("expected external_post_id 998877_112233, got %s", updatedPost.ExternalPostID)
 	}
 
 	logs, _ := store.ListPublishLogsByPost(context.Background(), post.ID)
-	if len(logs) != 1 {
-		t.Fatalf("expected 1 publish log entry, got %d", len(logs))
+	if len(logs) != 1 || logs[0].Action != "PUBLISH_FEED" {
+		t.Fatalf("expected 1 PUBLISH_FEED log entry, got %+v", logs)
+	}
+}
+
+func TestComputeBackoffDuration(t *testing.T) {
+	d1 := ComputeBackoffDuration(1)
+	if d1 != 1*time.Minute {
+		t.Fatalf("expected 1m for attempt 1, got %v", d1)
+	}
+	d2 := ComputeBackoffDuration(2)
+	if d2 != 5*time.Minute {
+		t.Fatalf("expected 5m for attempt 2, got %v", d2)
+	}
+	d3 := ComputeBackoffDuration(3)
+	if d3 != 15*time.Minute {
+		t.Fatalf("expected 15m for attempt 3, got %v", d3)
+	}
+	d4 := ComputeBackoffDuration(4)
+	if d4 != 15*time.Minute {
+		t.Fatalf("expected 15m for attempt 4, got %v", d4)
 	}
 }

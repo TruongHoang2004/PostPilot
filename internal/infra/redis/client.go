@@ -17,9 +17,9 @@ import (
 )
 
 const (
-	QueueKeyFast  = "fbposter:queue:fast"
-	QueueKeyHeavy = "fbposter:queue:heavy"
-	RateKeyPrefix = "fbposter:ratelimit:page:"
+	QueueKeyFast  = "postpilot:queue:fast"
+	QueueKeyHeavy = "postpilot:queue:heavy"
+	RateKeyPrefix = "postpilot:ratelimit:channel:"
 )
 
 // ErrQueueEmpty được trả về khi BRPOP hết thời gian chờ mà chưa có job mới.
@@ -182,9 +182,9 @@ func (c *Client) QueueDepth(ctx context.Context, tier string) (int, error) {
 	return 0, nil
 }
 
-// SavePageRateLimit lưu phần trăm sử dụng Rate-Limit của Page vào Redis với TTL 15 phút.
-func (c *Client) SavePageRateLimit(ctx context.Context, pageID string, usage domain.RateLimitUsage) error {
-	key := RateKeyPrefix + pageID
+// SaveChannelRateLimit lưu phần trăm sử dụng Rate-Limit của Channel vào Redis với TTL 15 phút.
+func (c *Client) SaveChannelRateLimit(ctx context.Context, channelExternalID string, usage domain.RateLimitUsage) error {
+	key := RateKeyPrefix + channelExternalID
 	raw, _ := json.Marshal(usage)
 
 	if c.useMemoryFallback {
@@ -198,9 +198,9 @@ func (c *Client) SavePageRateLimit(ctx context.Context, pageID string, usage dom
 	return err
 }
 
-// GetPageRateLimit đọc thông số Rate-Limit hiện tại của Page từ Redis.
-func (c *Client) GetPageRateLimit(ctx context.Context, pageID string) (domain.RateLimitUsage, error) {
-	key := RateKeyPrefix + pageID
+// GetChannelRateLimit đọc thông số Rate-Limit hiện tại của Channel từ Redis.
+func (c *Client) GetChannelRateLimit(ctx context.Context, channelExternalID string) (domain.RateLimitUsage, error) {
+	key := RateKeyPrefix + channelExternalID
 	var usage domain.RateLimitUsage
 
 	if c.useMemoryFallback {
@@ -224,9 +224,9 @@ func (c *Client) GetPageRateLimit(ctx context.Context, pageID string) (domain.Ra
 	return usage, nil
 }
 
-// DeletePageRateLimit xóa thông số Rate-Limit của Page khỏi Redis khi xóa Page.
-func (c *Client) DeletePageRateLimit(ctx context.Context, pageID string) error {
-	key := RateKeyPrefix + pageID
+// DeleteChannelRateLimit xóa thông số Rate-Limit của Channel khỏi Redis khi xóa Channel.
+func (c *Client) DeleteChannelRateLimit(ctx context.Context, channelExternalID string) error {
+	key := RateKeyPrefix + channelExternalID
 	if c.useMemoryFallback {
 		c.mu.Lock()
 		defer c.mu.Unlock()

@@ -153,20 +153,20 @@ export function PostDetailModal({ postId, onClose, onRefresh }: PostDetailModalP
                 </div>
               </div>
 
-              {/* Published Facebook Link if exists */}
-              {post.fb_post_id && (
+              {/* Published External Link if exists */}
+              {post.external_post_id && (
                 <div className="p-3 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 rounded-xl flex items-center justify-between">
                   <div className="flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
                     <CheckCircle2 className="h-4 w-4 text-emerald-500 dark:text-emerald-400" />
-                    <span>Facebook Post ID: <code className="font-mono font-bold text-slate-900 dark:text-white">{post.fb_post_id}</code></span>
+                    <span>External Post ID: <code className="font-mono font-bold text-slate-900 dark:text-white">{post.external_post_id}</code></span>
                   </div>
                   <a
-                    href={`https://facebook.com/${post.fb_post_id}`}
+                    href={`https://facebook.com/${post.external_post_id}`}
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-center gap-1 text-xs font-semibold px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors"
                   >
-                    Xem trên FB <ExternalLink className="h-3 w-3" />
+                    Xem bài đăng <ExternalLink className="h-3 w-3" />
                   </a>
                 </div>
               )}
@@ -256,18 +256,19 @@ export function PostDetailModal({ postId, onClose, onRefresh }: PostDetailModalP
                             <Clock className="h-3 w-3" />
                             <span>{log.duration_ms}ms</span>
                             <span>•</span>
-                            <span>{formatDate(log.executed_at)}</span>
+                            <span>{formatDate(log.created_at)}</span>
                           </div>
                         </div>
 
-                        {log.error_message ? (
+                        {log.error_code ? (
                           <div className="text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/5 p-2 rounded-lg border border-rose-200 dark:border-rose-500/20 font-mono text-[11px] break-all">
-                            {log.error_code ? `[Code ${log.error_code}] ` : ""}
-                            {log.error_message}
+                            {`[Code ${log.error_code}] `}
+                            {log.response_body || log.request_summary}
                           </div>
-                        ) : log.fb_post_id ? (
-                          <div className="text-emerald-600 dark:text-emerald-400 font-mono text-[11px]">
-                            Đăng thành công! Meta ID: {log.fb_post_id}
+                        ) : log.response_body ? (
+                          <div className="text-emerald-600 dark:text-emerald-400 font-mono text-[11px] break-all">
+                            {log.action ? `[${log.action}] ` : ""}
+                            {log.response_body}
                           </div>
                         ) : null}
                       </div>

@@ -347,31 +347,31 @@ const dashboardHTML = `<!DOCTYPE html>
           '🟢 Hệ thống Online (' + health.redis_mode + ')';
 
         const stats = await fetch('/api/v1/stats').then(r => r.json());
-        document.getElementById('st-pages').textContent = stats.active_pages + ' / ' + stats.total_pages;
+        document.getElementById('st-pages').textContent = stats.active_channels + ' / ' + stats.total_channels;
         document.getElementById('st-scheduled').textContent = stats.scheduled_posts;
         document.getElementById('st-published').textContent = stats.published_posts;
         document.getElementById('st-failed').textContent = stats.failed_posts;
         document.getElementById('st-queues').textContent = stats.fast_queue_depth + ' / ' + stats.heavy_queue_depth;
 
-        const pagesData = await fetch('/api/v1/pages').then(r => r.json());
-        const pages = pagesData.pages || [];
+        const channelsData = await fetch('/api/v1/channels').then(r => r.json());
+        const channels = channelsData.channels || [];
         const pageSelect = document.getElementById('post-page');
         const currentSelected = pageSelect.value;
-        pageSelect.innerHTML = pages.map(p =>
-          '<option value="' + p.id + '">' + p.page_name + ' (' + p.page_id + ')</option>'
+        pageSelect.innerHTML = channels.map(c =>
+          '<option value="' + c.id + '">[' + c.platform + '] ' + c.name + ' (' + c.external_id + ')</option>'
         ).join('');
         if (currentSelected) pageSelect.value = currentSelected;
 
-        document.getElementById('pages-tbody').innerHTML = pages.map(p => {
-          const maxRate = Math.max(p.rate_limit_call_count || 0, p.rate_limit_total_time || 0, p.rate_limit_total_cputime || 0);
+        document.getElementById('pages-tbody').innerHTML = channels.map(c => {
+          const maxRate = Math.max(c.rate_limit_call_count || 0, c.rate_limit_total_time || 0, c.rate_limit_total_cputime || 0);
           return '<tr>' +
-            '<td><strong>' + p.page_name + '</strong></td>' +
-            '<td><code>' + p.page_id + '</code></td>' +
-            '<td><code>' + (p.masked_token || '***') + '</code></td>' +
-            '<td><span class="status-pill status-' + p.token_status + '">' + p.token_status + '</span></td>' +
+            '<td><strong>' + c.name + '</strong> <span class="badge">' + c.platform + '</span></td>' +
+            '<td><code>' + c.external_id + '</code></td>' +
+            '<td><code>' + (c.masked_token || '***') + '</code></td>' +
+            '<td><span class="status-pill status-' + c.token_status + '">' + c.token_status + '</span></td>' +
             '<td>' + maxRate + '%</td>' +
           '</tr>';
-        }).join('') || '<tr><td colspan="5" style="color:var(--muted);">Chưa có Fanpage nào. Hãy thêm Fanpage ở cột bên trái.</td></tr>';
+        }).join('') || '<tr><td colspan="5" style="color:var(--muted);">Chưa có Kênh xuất bản nào. Hãy kết nối ở cột bên trái.</td></tr>';
 
         const postsData = await fetch('/api/v1/posts').then(r => r.json());
         const posts = postsData.posts || [];
@@ -379,7 +379,7 @@ const dashboardHTML = `<!DOCTYPE html>
           const shortText = (post.content || '').slice(0, 48) + ((post.content || '').length > 48 ? '...' : '');
           const sched = post.scheduled_at ? new Date(post.scheduled_at).toLocaleString('vi-VN') : '-';
           return '<tr>' +
-            '<td>' + (post.page_name || post.page_uuid.slice(0,8)) + '</td>' +
+            '<td>' + (post.channel_name || post.channel_id.slice(0,8)) + '</td>' +
             '<td><code>' + post.media_type + '</code></td>' +
             '<td title="' + (post.last_error_message || '') + '">' + shortText + '</td>' +
             '<td>' + sched + '</td>' +
@@ -393,14 +393,14 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     async function addPage() {
-      const page_id = document.getElementById('page-id').value.trim();
-      const page_name = document.getElementById('page-name').value.trim();
+      const external_id = document.getElementById('page-id').value.trim();
+      const name = document.getElementById('page-name').value.trim();
       const access_token = document.getElementById('page-token').value.trim();
-      if (!page_id || !page_name || !access_token) return alert('Vui lòng nhập đủ Page ID, Tên Fanpage và Token');
-      const res = await fetch('/api/v1/pages', {
+      if (!external_id || !name || !access_token) return alert('Vui lòng nhập đủ ID Kênh, Tên Kênh và Token');
+      const res = await fetch('/api/v1/channels', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ page_id, page_name, access_token })
+        body: JSON.stringify({ platform: 'FACEBOOK', external_id, name, access_token })
       });
       if (!res.ok) {
         const err = await res.json();
@@ -578,13 +578,13 @@ const dashboardHTML = `<!DOCTYPE html>
         return alert('Video đang tải lên, vui lòng đợi hoàn tất trước khi đăng!');
       }
 
-      const page_uuid = document.getElementById('post-page').value;
+      const channel_id = document.getElementById('post-page').value;
       const content = document.getElementById('post-content').value;
       const media_type = document.getElementById('post-media-type').value;
       const rawUrls = document.getElementById('post-media-urls').value.trim();
       const schedVal = document.getElementById('post-schedule').value;
 
-      if (!page_uuid) return alert('Hãy thêm và chọn một Fanpage trước!');
+      if (!channel_id) return alert('Hãy thêm và chọn một Kênh xuất bản trước!');
       const urls = rawUrls ? rawUrls.split(',').map(s => s.trim()).filter(Boolean) : [];
 
       if ((media_type === 'VIDEO' || media_type === 'REEL') && urls.length === 0) {
@@ -592,7 +592,7 @@ const dashboardHTML = `<!DOCTYPE html>
       }
 
       const payload = {
-        page_uuid,
+        channel_id,
         content,
         media_type,
         link_url: media_type === 'LINK' && urls.length > 0 ? urls[0] : '',

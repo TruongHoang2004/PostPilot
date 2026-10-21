@@ -11,9 +11,9 @@ interface StatsCardsProps {
 export function StatsCards({ stats }: StatsCardsProps) {
   const cards = [
     {
-      title: "Fanpage Đang Kết Nối",
-      value: stats ? `${stats.active_pages} / ${stats.total_pages}` : "0 / 0",
-      subtext: "Hoạt động / Tổng số Fanpage",
+      title: "Kênh / Fanpage Kết Nối",
+      value: stats ? `${stats.active_channels} / ${stats.total_channels}` : "0 / 0",
+      subtext: "Hoạt động / Tổng số Kênh",
       icon: Flag,
       color: "from-blue-600/20 to-blue-500/5",
       borderColor: "border-blue-500/20",

@@ -18,13 +18,13 @@ import (
 // Scheduler chịu trách nhiệm:
 // 1. Quét định kỳ các bài viết đã đến giờ hẹn (`SCHEDULED`) hoặc đến giờ thử lại (`FAILED` + `next_retry_at <= NOW()`).
 // 2. Đẩy job vào Redis Queue (`FAST` hoặc `HEAVY`).
-// 3. Kiểm tra sức khỏe định kỳ của toàn bộ Page Access Token (`Token Health Check`).
+// 3. Kiểm tra sức khỏe định kỳ của toàn bộ Channel Credentials thông qua `domain.PublisherRegistry`.
 type Scheduler struct {
 	cfg      *config.Config
 	store    database.Store
 	redis    *redis.Client
 	cipher   *crypto.TokenCipher
-	fbClient *facebook.Client
+	registry *domain.PublisherRegistry
 	notifier *notifier.TelegramNotifier
 	logger   *slog.Logger
 }
@@ -38,15 +38,27 @@ func NewScheduler(
 	notif *notifier.TelegramNotifier,
 	logger *slog.Logger,
 ) *Scheduler {
+	reg := domain.NewPublisherRegistry()
+	if fbClient != nil {
+		reg.Register(facebook.NewPublisherAdapter(fbClient))
+	}
 	return &Scheduler{
 		cfg:      cfg,
 		store:    store,
 		redis:    redisClient,
 		cipher:   cipher,
-		fbClient: fbClient,
+		registry: reg,
 		notifier: notif,
 		logger:   logger,
 	}
+}
+
+// WithPublisherRegistry cho phép cấu hình bộ đăng ký Adapter đa nền tảng cho Scheduler.
+func (s *Scheduler) WithPublisherRegistry(reg *domain.PublisherRegistry) *Scheduler {
+	if reg != nil {
+		s.registry = reg
+	}
+	return s
 }
 
 // Start khởi chạy vòng lặp quét lịch hẹn và vòng lặp kiểm tra sức khỏe Token.
@@ -87,7 +99,7 @@ func (s *Scheduler) ScanAndEnqueueDuePosts(ctx context.Context) int {
 	for _, p := range claimedPosts {
 		payload := domain.PublishJobPayload{
 			PostID:     p.ID,
-			PageUUID:   p.PageUUID,
+			ChannelID:  p.ChannelID,
 			QueueTier:  p.QueueTier,
 			Attempt:    p.RetryCount + 1,
 			EnqueuedAt: now,
@@ -114,42 +126,47 @@ func (s *Scheduler) runTokenHealthChecker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.CheckAllPageTokens(ctx)
+			s.CheckAllChannelTokens(ctx)
 		}
 	}
 }
 
-// CheckAllPageTokens kiểm tra toàn bộ các Fanpage đang hoạt động xem Token còn hợp lệ trên Meta hay không.
-func (s *Scheduler) CheckAllPageTokens(ctx context.Context) {
-	pages, err := s.store.ListPages(ctx)
+// CheckAllChannelTokens kiểm tra toàn bộ các Channel đang hoạt động xem Credential còn hợp lệ trên nền tảng đích hay không.
+func (s *Scheduler) CheckAllChannelTokens(ctx context.Context) {
+	channels, err := s.store.ListChannels(ctx)
 	if err != nil {
-		s.logger.Error("Token health check failed to list pages", "error", err)
+		s.logger.Error("Token health check failed to list channels", "error", err)
 		return
 	}
 
 	now := time.Now().UTC()
-	for _, page := range pages {
-		if !page.IsActive {
+	for _, channel := range channels {
+		if !channel.IsActive {
 			continue
 		}
 
-		rawToken, err := s.cipher.Decrypt(page.EncryptedAccessToken)
+		publisher, err := s.registry.Get(channel.Platform)
 		if err != nil {
-			s.logger.Error("Failed to decrypt page token during health check", "page_id", page.PageID, "error", err)
 			continue
 		}
 
-		debugInfo, err := s.fbClient.DebugToken(ctx, rawToken, "")
-		if err != nil || !debugInfo.IsValid {
-			_ = s.store.UpdatePageTokenStatus(ctx, page.ID, domain.TokenStatusExpired, now)
+		rawToken, err := s.cipher.Decrypt(channel.EncryptedAccessToken)
+		if err != nil {
+			s.logger.Error("Failed to decrypt channel token during health check", "channel_id", channel.ExternalID, "error", err)
+			continue
+		}
+
+		health, err := publisher.VerifyToken(ctx, rawToken)
+		if err != nil || health == nil || !health.IsValid {
+			_ = s.store.UpdateChannelTokenStatus(ctx, channel.ID, domain.TokenStatusExpired, now)
 			_ = s.notifier.SendAlert(
 				ctx,
-				"Page Access Token Hết Hạn / Mất Quyền",
-				fmt.Sprintf("Fanpage: *%s* (`%s`)\nLý do: Token không còn hợp lệ. Vui lòng kết nối lại OAuth trên Dashboard.", page.PageName, page.PageID),
+				"Channel Access Token Hết Hạn / Mất Quyền",
+				fmt.Sprintf("Kênh: *%s* (`%s` - `%s`)\nLý do: Token không còn hợp lệ. Vui lòng kết nối lại OAuth trên Dashboard.", channel.Name, channel.ExternalID, channel.Platform),
 			)
 			continue
 		}
 
-		_ = s.store.UpdatePageTokenStatus(ctx, page.ID, domain.TokenStatusActive, now)
+		_ = s.store.UpdateChannelTokenStatus(ctx, channel.ID, domain.TokenStatusActive, now)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/happy-darwin/fb-autoposter/internal/config"
 	"github.com/happy-darwin/fb-autoposter/internal/crypto"
 	"github.com/happy-darwin/fb-autoposter/internal/database"
+	"github.com/happy-darwin/fb-autoposter/internal/domain"
 	"github.com/happy-darwin/fb-autoposter/internal/facebook"
 	"github.com/happy-darwin/fb-autoposter/internal/infra/ai"
 	"github.com/happy-darwin/fb-autoposter/internal/infra/notifier"
@@ -18,12 +19,14 @@ import (
 	"github.com/happy-darwin/fb-autoposter/internal/worker"
 )
 
-// Server quản lý toàn bộ RESTful API và Giao diện Quản trị Web (Admin Dashboard).
+// Server điều phối HTTP Router, gắn kết các Bounded Context Handlers (Publishing, Channel, Media, AI, System)
+// và các Platform Adapters (Facebook OAuth/Webhook).
 type Server struct {
 	cfg       *config.Config
 	store     database.Store
 	redis     *redis.Client
 	cipher    *crypto.TokenCipher
+	registry  *domain.PublisherRegistry
 	fbClient  *facebook.Client
 	s3        *storage.S3Service
 	aiGen     *ai.GeminiGenerator
@@ -44,11 +47,16 @@ func NewServer(
 	proc *worker.Processor,
 	logger *slog.Logger,
 ) *Server {
+	reg := domain.NewPublisherRegistry()
+	if fbClient != nil {
+		reg.Register(facebook.NewPublisherAdapter(fbClient))
+	}
 	return &Server{
 		cfg:       cfg,
 		store:     store,
 		redis:     redisClient,
 		cipher:    cipher,
+		registry:  reg,
 		fbClient:  fbClient,
 		s3:        s3,
 		aiGen:     aiGen,
@@ -58,39 +66,49 @@ func NewServer(
 	}
 }
 
-// Handler khởi tạo HTTP Router với đầy đủ các endpoint chuẩn RESTful API v1.
+// WithPublisherRegistry cho phép tiêm (inject) bộ đăng ký Adapter đa nền tảng tùy chỉnh vào API Server.
+func (s *Server) WithPublisherRegistry(reg *domain.PublisherRegistry) *Server {
+	if reg != nil {
+		s.registry = reg
+	}
+	return s
+}
+
+// Handler khởi tạo HTTP Router với các module đã được phân tách theo Bounded Context.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// 1. Giao diện Dashboard & Healthcheck
+	// 1. System & Observability Module (system_handler.go & ui_dashboard.go)
 	mux.HandleFunc("GET /", s.handleDashboardUI)
 	mux.HandleFunc("GET /healthz", s.handleHealthCheck)
 	mux.HandleFunc("GET /api/v1/stats", s.handleGetStats)
 
-	// 2. Luồng OAuth2 & Tự động đổi Permanent Page Token
-	mux.HandleFunc("GET /api/v1/auth/facebook/login", s.handleFBOAuthLogin)
-	mux.HandleFunc("GET /api/v1/auth/facebook/callback", s.handleFBOAuthCallback)
-	mux.HandleFunc("POST /api/v1/auth/facebook/exchange-token", s.handleFBExchangeUserToken)
-
-	// 3. Quản lý Fanpage & Sức khỏe Token
-	mux.HandleFunc("GET /api/v1/pages", s.handleListPages)
-	mux.HandleFunc("POST /api/v1/pages", s.handleUpsertPage)
-	mux.HandleFunc("DELETE /api/v1/pages/{id}", s.handleDeletePage)
-	mux.HandleFunc("POST /api/v1/pages/{id}/verify-token", s.handleVerifyPageToken)
-
-	// 4. Quản lý Bài viết, Lên lịch & Đăng ngay (Publish Now)
+	// 2. Post & Publishing Core Domain Module (publishing_handler.go)
 	mux.HandleFunc("GET /api/v1/posts", s.handleListPosts)
 	mux.HandleFunc("POST /api/v1/posts", s.handleCreatePost)
 	mux.HandleFunc("GET /api/v1/posts/{id}", s.handleGetPostDetail)
 	mux.HandleFunc("POST /api/v1/posts/{id}/publish-now", s.handlePublishPostNow)
 	mux.HandleFunc("POST /api/v1/posts/{id}/cancel", s.handleCancelPost)
 
-	// 5. Media Upload (Direct & Presigned), AI Content Generator & Meta Webhook
+	// 3. Channel (Publishing Target) Module (channel_handler.go)
+	mux.HandleFunc("GET /api/v1/channels", s.handleListChannels)
+	mux.HandleFunc("POST /api/v1/channels", s.handleUpsertChannel)
+	mux.HandleFunc("DELETE /api/v1/channels/{id}", s.handleDeleteChannel)
+	mux.HandleFunc("POST /api/v1/channels/{id}/verify-token", s.handleVerifyChannelToken)
+
+	// 4. Media Management Module (media_handler.go)
 	_ = os.MkdirAll("./uploads", 0755)
 	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
 	mux.HandleFunc("POST /api/v1/media/upload", s.handleMediaUpload)
 	mux.HandleFunc("POST /api/v1/media/presign", s.handlePresignUpload)
+
+	// 5. AI Content Generation Module (ai_handler.go)
 	mux.HandleFunc("POST /api/v1/ai/generate", s.handleAIGenerateContent)
+
+	// 6. Facebook Platform Adapter Module: OAuth2 & Webhooks (facebook_handler.go)
+	mux.HandleFunc("GET /api/v1/auth/facebook/login", s.handleFBOAuthLogin)
+	mux.HandleFunc("GET /api/v1/auth/facebook/callback", s.handleFBOAuthCallback)
+	mux.HandleFunc("POST /api/v1/auth/facebook/exchange-token", s.handleFBExchangeUserToken)
 	mux.HandleFunc("GET /api/v1/webhooks/facebook", s.handleFBWebhookVerify)
 	mux.HandleFunc("POST /api/v1/webhooks/facebook", s.handleFBWebhookEvent)
 

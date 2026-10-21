@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef } from "react";
-import { FacebookPage, MediaType } from "@/lib/types";
+import { Channel, MediaType } from "@/lib/types";
 import { api } from "@/lib/api";
 import {
   Sparkles,
@@ -22,14 +22,14 @@ import {
 import { useDialog } from "@/context/DialogContext";
 
 interface PostComposerProps {
-  pages: FacebookPage[];
+  channels: Channel[];
   onSuccess: () => void;
 }
 
-export function PostComposer({ pages, onSuccess }: PostComposerProps) {
+export function PostComposer({ channels, onSuccess }: PostComposerProps) {
   const { confirm, alert, toast } = useDialog();
-  const [selectedPageUUID, setSelectedPageUUID] = useState<string>(
-    pages.length > 0 ? pages[0].id : ""
+  const [selectedChannelID, setSelectedChannelID] = useState<string>(
+    channels.length > 0 ? channels[0].id : ""
   );
 
   // Content & Type
@@ -59,12 +59,12 @@ export function PostComposer({ pages, onSuccess }: PostComposerProps) {
   const [dragOver, setDragOver] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync selected page if empty
+  // Sync selected channel if empty or deleted
   React.useEffect(() => {
-    if (!selectedPageUUID && pages.length > 0) {
-      setSelectedPageUUID(pages[0].id);
+    if (channels.length > 0 && (!selectedChannelID || !channels.some((c) => c.id === selectedChannelID))) {
+      setSelectedChannelID(channels[0].id);
     }
-  }, [pages, selectedPageUUID]);
+  }, [channels, selectedChannelID]);
 
   // AI Generate Handler
   const handleGenerateAI = async () => {
@@ -161,10 +161,10 @@ export function PostComposer({ pages, onSuccess }: PostComposerProps) {
 
   // Submit Post
   const handleSubmit = async (publishNow: boolean) => {
-    if (!selectedPageUUID) {
+    if (!selectedChannelID) {
       alert({
-        title: "Chưa chọn Fanpage",
-        message: "Vui lòng chọn Fanpage đích để đăng bài viết!",
+        title: "Chưa chọn Kênh",
+        message: "Vui lòng chọn Kênh phát sóng đích để đăng bài viết!",
         variant: "warning",
       });
       return;
@@ -183,10 +183,10 @@ export function PostComposer({ pages, onSuccess }: PostComposerProps) {
       .map((s) => s.trim())
       .filter(Boolean);
 
-    if ((mediaType === "VIDEO" || mediaType === "REEL") && urls.length === 0) {
+    if (["VIDEO", "REEL", "IMAGE", "ALBUM"].includes(mediaType) && urls.length === 0) {
       alert({
-        title: "Thiếu Video",
-        message: "Loại bài viết Video / Reel bắt buộc phải có ít nhất 1 video đính kèm!",
+        title: "Thiếu tệp Media đính kèm",
+        message: `Loại bài viết ${mediaType} bắt buộc phải có ít nhất 1 tệp media hoặc link đính kèm!`,
         variant: "warning",
       });
       return;
@@ -214,7 +214,7 @@ export function PostComposer({ pages, onSuccess }: PostComposerProps) {
     setIsSubmitting(true);
     try {
       await api.createPost({
-        page_uuid: selectedPageUUID,
+        channel_id: selectedChannelID,
         content: content.trim(),
         media_type: mediaType,
         link_url: mediaType === "LINK" && urls.length > 0 ? urls[0] : "",
@@ -264,25 +264,25 @@ export function PostComposer({ pages, onSuccess }: PostComposerProps) {
 
   return (
     <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 backdrop-blur-sm p-5 sm:p-6 shadow-sm dark:shadow-xl space-y-5 transition-colors">
-      {/* Target Fanpage Selection */}
+      {/* Target Channel Selection */}
       <div>
         <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2">
-          Chọn Fanpage phát sóng
+          Chọn Kênh phát sóng
         </label>
-        {pages.length === 0 ? (
+        {channels.length === 0 ? (
           <div className="p-3 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 rounded-xl text-amber-700 dark:text-amber-300 text-xs flex items-center gap-2">
             <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>Chưa có Fanpage nào được kết nối. Hãy thêm Fanpage trong tab Quản lý Fanpage trước.</span>
+            <span>Chưa có Kênh phát sóng nào được kết nối. Hãy thêm Kênh trong tab Quản lý Fanpage trước.</span>
           </div>
         ) : (
           <select
-            value={selectedPageUUID}
-            onChange={(e) => setSelectedPageUUID(e.target.value)}
+            value={selectedChannelID}
+            onChange={(e) => setSelectedChannelID(e.target.value)}
             className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-xs text-slate-900 dark:text-slate-100 font-semibold focus:outline-none focus:border-blue-500"
           >
-            {pages.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.page_name} ({p.page_id}) — {p.token_status}
+            {channels.map((c) => (
+              <option key={c.id} value={c.id}>
+                [{c.platform || "FACEBOOK"}] {c.name} ({c.external_id}) — {c.token_status}
               </option>
             ))}
           </select>

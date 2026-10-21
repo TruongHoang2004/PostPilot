@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -23,6 +24,10 @@ import (
 )
 
 func TestAPIEndpointsFlow(t *testing.T) {
+	t.Cleanup(func() {
+		_ = os.RemoveAll("./uploads")
+	})
+
 	cfg := config.Load()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := database.NewInMemoryStore()
@@ -45,26 +50,26 @@ func TestAPIEndpointsFlow(t *testing.T) {
 		t.Fatalf("expected /healthz 200, got %d", rec1.Code)
 	}
 
-	// 2. Test POST /api/v1/pages
-	pageBody := `{"page_id":"100200300","page_name":"Darwin Official","category":"Tech","access_token":"EAABsbCS1iHgBO1234567890"}`
-	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/pages", strings.NewReader(pageBody))
+	// 2. Test POST /api/v1/channels
+	channelBody := `{"platform":"FACEBOOK","external_id":"100200300","name":"Darwin Official","category":"Tech","access_token":"EAABsbCS1iHgBO1234567890"}`
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/channels", strings.NewReader(channelBody))
 	rec2 := httptest.NewRecorder()
 	handler.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusCreated {
-		t.Fatalf("expected POST /api/v1/pages 201, got %d: %s", rec2.Code, rec2.Body.String())
+		t.Fatalf("expected POST /api/v1/channels 201, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 
-	var createdPage map[string]any
-	_ = json.Unmarshal(rec2.Body.Bytes(), &createdPage)
-	pageUUID, _ := createdPage["id"].(string)
-	if pageUUID == "" {
-		t.Fatalf("expected non-empty page UUID")
+	var createdChannel map[string]any
+	_ = json.Unmarshal(rec2.Body.Bytes(), &createdChannel)
+	channelID, _ := createdChannel["id"].(string)
+	if channelID == "" {
+		t.Fatalf("expected non-empty channel ID")
 	}
 
 	// 3. Test POST /api/v1/posts
 	postPayload, _ := json.Marshal(map[string]any{
-		"page_uuid":   pageUUID,
-		"content":     "Hello Facebook from Golang Auto-Poster!",
+		"channel_id":  channelID,
+		"content":     "Hello Multi-Platform from PostPilot DDD!",
 		"media_type":  "IMAGE",
 		"media_urls":  []string{"https://cdn.example.com/banner.png"},
 		"publish_now": true,
@@ -74,6 +79,55 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	handler.ServeHTTP(rec3, req3)
 	if rec3.Code != http.StatusCreated {
 		t.Fatalf("expected POST /api/v1/posts 201, got %d: %s", rec3.Code, rec3.Body.String())
+	}
+	var createdPostResp map[string]any
+	_ = json.Unmarshal(rec3.Body.Bytes(), &createdPostResp)
+	createdPostID, _ := createdPostResp["id"].(string)
+
+	// 3a. Test GET /api/v1/posts and GET /api/v1/posts/{id}
+	reqListPosts := httptest.NewRequest(http.MethodGet, "/api/v1/posts", nil)
+	recListPosts := httptest.NewRecorder()
+	handler.ServeHTTP(recListPosts, reqListPosts)
+	if recListPosts.Code != http.StatusOK {
+		t.Fatalf("expected GET /api/v1/posts 200, got %d", recListPosts.Code)
+	}
+
+	reqGetPost := httptest.NewRequest(http.MethodGet, "/api/v1/posts/"+createdPostID, nil)
+	recGetPost := httptest.NewRecorder()
+	handler.ServeHTTP(recGetPost, reqGetPost)
+	if recGetPost.Code != http.StatusOK {
+		t.Fatalf("expected GET /api/v1/posts/%s 200, got %d", createdPostID, recGetPost.Code)
+	}
+
+	// 3b. Test POST /api/v1/posts/{id}/cancel
+	reqCancel := httptest.NewRequest(http.MethodPost, "/api/v1/posts/"+createdPostID+"/cancel", nil)
+	recCancel := httptest.NewRecorder()
+	handler.ServeHTTP(recCancel, reqCancel)
+	if recCancel.Code != http.StatusOK {
+		t.Fatalf("expected POST /api/v1/posts/cancel 200, got %d", recCancel.Code)
+	}
+
+	// 3c. Test GET /api/v1/channels and POST /api/v1/channels/{id}/verify-token
+	reqChannels := httptest.NewRequest(http.MethodGet, "/api/v1/channels", nil)
+	recChannels := httptest.NewRecorder()
+	handler.ServeHTTP(recChannels, reqChannels)
+	if recChannels.Code != http.StatusOK {
+		t.Fatalf("expected GET /api/v1/channels 200, got %d", recChannels.Code)
+	}
+
+	reqVerify := httptest.NewRequest(http.MethodPost, "/api/v1/channels/"+channelID+"/verify-token", nil)
+	recVerify := httptest.NewRecorder()
+	handler.ServeHTTP(recVerify, reqVerify)
+	if recVerify.Code != http.StatusOK {
+		t.Fatalf("expected POST /api/v1/channels/verify-token 200, got %d", recVerify.Code)
+	}
+
+	// 3d. Test DELETE /api/v1/channels/{id}
+	reqDelChan := httptest.NewRequest(http.MethodDelete, "/api/v1/channels/"+channelID, nil)
+	recDelChan := httptest.NewRecorder()
+	handler.ServeHTTP(recDelChan, reqDelChan)
+	if recDelChan.Code != http.StatusOK {
+		t.Fatalf("expected DELETE /api/v1/channels 200, got %d", recDelChan.Code)
 	}
 
 	// 4. Test POST /api/v1/ai/generate (fallback template)

@@ -49,9 +49,9 @@ export function PostList({ posts, loading, onRefresh }: PostListProps) {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchContent = post.content?.toLowerCase().includes(q);
-      const matchPage = post.page_name?.toLowerCase().includes(q);
+      const matchChannel = post.channel_name?.toLowerCase().includes(q);
       const matchId = post.id.toLowerCase().includes(q);
-      return matchContent || matchPage || matchId;
+      return matchContent || matchChannel || matchId;
     }
     return true;
   });
@@ -197,14 +197,14 @@ export function PostList({ posts, loading, onRefresh }: PostListProps) {
                       className="hover:bg-slate-100/80 dark:hover:bg-slate-800/30 transition-colors group cursor-pointer"
                       onClick={() => setSelectedPostId(post.id)}
                     >
-                      {/* Fanpage */}
+                      {/* Channel / Fanpage */}
                       <td className="py-3 px-4 font-semibold text-slate-900 dark:text-slate-200 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           <span className="h-6 w-6 rounded-md bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30 flex items-center justify-center text-[10px] font-bold">
-                            {(post.page_name || "P").charAt(0).toUpperCase()}
+                            {(post.channel_name || "C").charAt(0).toUpperCase()}
                           </span>
-                          <span className="max-w-[140px] truncate" title={post.page_name || post.page_uuid}>
-                            {post.page_name || post.page_uuid.slice(0, 8)}
+                          <span className="max-w-[140px] truncate" title={post.channel_name || post.channel_id}>
+                            {post.channel_name || post.channel_id.slice(0, 8)}
                           </span>
                         </div>
                       </td>

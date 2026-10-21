@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { FacebookPage, VerifyTokenResponse } from "@/lib/types";
+import { Channel, VerifyTokenResponse } from "@/lib/types";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import {
@@ -12,30 +12,25 @@ import {
   Check,
   Plus,
   RefreshCw,
-  ExternalLink,
-  Layers,
   Sparkles,
-  Lock,
-  Cpu,
-  Clock,
   Zap,
   Trash2,
 } from "lucide-react";
 import { useDialog } from "@/context/DialogContext";
 
 interface PageManagerProps {
-  pages: FacebookPage[];
+  channels: Channel[];
   loading: boolean;
   onRefresh: () => void;
 }
 
-export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
+export function PageManager({ channels, loading, onRefresh }: PageManagerProps) {
   const { confirm, alert, toast } = useDialog();
   const [activeSubTab, setActiveSubTab] = useState<"list" | "manual" | "exchange">("list");
 
   // Form thêm thủ công
-  const [pageId, setPageId] = useState("");
-  const [pageName, setPageName] = useState("");
+  const [externalId, setExternalId] = useState("");
+  const [channelName, setChannelName] = useState("");
   const [category, setCategory] = useState("");
   const [accessToken, setAccessToken] = useState("");
   const [addingManual, setAddingManual] = useState(false);
@@ -59,26 +54,26 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const handleDeletePage = async (page: FacebookPage) => {
+  const handleDeleteChannel = async (ch: Channel) => {
     const isConfirmed = await confirm({
-      title: "Xác nhận xóa Fanpage",
-      message: `Bạn có chắc chắn muốn ngắt kết nối và xóa Fanpage "${page.page_name}" (ID: ${page.page_id}) khỏi hệ thống? Tất cả bài viết và lịch hẹn liên quan sẽ bị xóa.`,
-      confirmText: "Xóa Fanpage",
+      title: "Xác nhận xóa Kênh phát sóng",
+      message: `Bạn có chắc chắn muốn ngắt kết nối và xóa kênh "${ch.name}" (ID: ${ch.external_id}) khỏi hệ thống? Tất cả bài viết và lịch hẹn liên quan sẽ bị xóa.`,
+      confirmText: "Xóa Kênh",
       cancelText: "Hủy bỏ",
       variant: "danger",
     });
 
     if (!isConfirmed) return;
 
-    setDeletingId(page.id);
+    setDeletingId(ch.id);
     try {
-      await api.deletePage(page.id);
-      toast(`✅ Đã xóa thành công Fanpage "${page.page_name}"`, "success");
+      await api.deleteChannel(ch.id);
+      toast(`✅ Đã xóa thành công kênh "${ch.name}"`, "success");
       onRefresh();
     } catch (err: any) {
       alert({
-        title: "Lỗi khi xóa Fanpage",
-        message: err.message || "Không thể xóa Fanpage. Vui lòng thử lại sau.",
+        title: "Lỗi khi xóa Kênh",
+        message: err.message || "Không thể xóa Kênh. Vui lòng thử lại sau.",
         variant: "danger",
       });
     } finally {
@@ -88,32 +83,33 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
 
   const handleManualAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pageId.trim() || !pageName.trim() || !accessToken.trim()) {
+    if (!externalId.trim() || !channelName.trim() || !accessToken.trim()) {
       alert({
         title: "Thiếu thông tin",
-        message: "Vui lòng điền đầy đủ Facebook Page ID, Tên Fanpage và Page Access Token!",
+        message: "Vui lòng điền đầy đủ External ID (Page ID), Tên Kênh và Access Token!",
         variant: "warning",
       });
       return;
     }
     setAddingManual(true);
     try {
-      await api.createPage({
-        page_id: pageId.trim(),
-        page_name: pageName.trim(),
+      await api.createChannel({
+        platform: "FACEBOOK",
+        external_id: externalId.trim(),
+        name: channelName.trim(),
         category: category.trim() || "Social Media",
         access_token: accessToken.trim(),
       });
-      setPageId("");
-      setPageName("");
+      setExternalId("");
+      setChannelName("");
       setCategory("");
       setAccessToken("");
       setActiveSubTab("list");
       onRefresh();
-      toast("✅ Đã lưu Fanpage và mã hóa AES-256-GCM an toàn!", "success");
+      toast("✅ Đã lưu Kênh và mã hóa AES-256-GCM an toàn!", "success");
     } catch (err: any) {
       alert({
-        title: "Lỗi thêm Fanpage",
+        title: "Lỗi thêm Kênh",
         message: err.message,
         variant: "danger",
       });
@@ -153,10 +149,10 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
     }
   };
 
-  const handleVerifyToken = async (uuid: string) => {
-    setVerifyingId(uuid);
+  const handleVerifyToken = async (channelID: string) => {
+    setVerifyingId(channelID);
     try {
-      const res = await api.verifyPageToken(uuid);
+      const res = await api.verifyChannelToken(channelID);
       setVerifyModalData(res);
       onRefresh();
     } catch (err: any) {
@@ -228,7 +224,7 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60"
             }`}
           >
-            📋 Danh sách Fanpage ({pages.length})
+            📋 Danh sách Kênh ({channels.length})
           </button>
           <button
             onClick={() => setActiveSubTab("manual")}
@@ -238,7 +234,7 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/60"
             }`}
           >
-            ➕ Thêm Fanpage Thủ Công
+            ➕ Thêm Kênh Thủ Công
           </button>
           <button
             onClick={() => setActiveSubTab("exchange")}
@@ -253,22 +249,22 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
         </div>
       </div>
 
-      {/* Sub Tab: Danh sách Fanpage */}
+      {/* Sub Tab: Danh sách Kênh */}
       {activeSubTab === "list" && (
         <div className="space-y-4">
-          {pages.length === 0 ? (
+          {channels.length === 0 ? (
             <div className="p-12 text-center rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/40 shadow-sm">
               <Key className="h-10 w-10 mx-auto mb-3 text-slate-400 dark:text-slate-600" />
-              <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">Chưa có Fanpage nào được kết nối</h3>
+              <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">Chưa có Kênh phát sóng nào được kết nối</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
-                Hãy thêm Fanpage cùng Token hoặc sử dụng tính năng Đổi Token Vĩnh Viễn để quản lý nhiều Fanpage cùng lúc.
+                Hãy thêm Fanpage cùng Token hoặc sử dụng tính năng Đổi Token Vĩnh Viễn để quản lý nhiều kênh cùng lúc.
               </p>
               <div className="flex justify-center gap-3 mt-4">
                 <button
                   onClick={() => setActiveSubTab("manual")}
                   className="px-4 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-600/20"
                 >
-                  + Thêm Fanpage ngay
+                  + Thêm Kênh ngay
                 </button>
                 <button
                   onClick={() => setActiveSubTab("exchange")}
@@ -280,32 +276,34 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {pages.map((p) => {
+              {channels.map((ch) => {
                 const maxRate = Math.max(
-                  p.rate_limit_call_count || 0,
-                  p.rate_limit_total_time || 0,
-                  p.rate_limit_total_cputime || 0
+                  ch.rate_limit_call_count || 0,
+                  ch.rate_limit_total_time || 0,
+                  ch.rate_limit_total_cputime || 0
                 );
-                const isVerifying = verifyingId === p.id;
-                const isActive = p.token_status === "ACTIVE";
+                const isVerifying = verifyingId === ch.id;
+                const isActive = ch.token_status === "ACTIVE";
 
                 return (
                   <div
-                    key={p.id}
+                    key={ch.id}
                     className="relative rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 backdrop-blur-sm p-5 hover:border-slate-300 dark:hover:border-slate-700 transition-all flex flex-col justify-between shadow-sm dark:shadow-lg"
                   >
                     <div>
-                      {/* Page Header */}
+                      {/* Channel Header */}
                       <div className="flex items-start justify-between gap-2 mb-3">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-black text-sm flex items-center justify-center shadow-md shadow-blue-500/20 shrink-0">
-                            {p.page_name.charAt(0).toUpperCase()}
+                            {ch.name.charAt(0).toUpperCase()}
                           </div>
                           <div>
-                            <h4 className="font-bold text-sm text-slate-900 dark:text-white line-clamp-1" title={p.page_name}>
-                              {p.page_name}
+                            <h4 className="font-bold text-sm text-slate-900 dark:text-white line-clamp-1" title={ch.name}>
+                              {ch.name}
                             </h4>
-                            <span className="text-[11px] text-slate-500 dark:text-slate-400 block">{p.category || "Fanpage"}</span>
+                            <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
+                              {ch.platform || "FACEBOOK"} • {ch.category || "Fanpage"}
+                            </span>
                           </div>
                         </div>
 
@@ -316,22 +314,22 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
                               : "bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-500/30"
                           }`}
                         >
-                          {p.token_status}
+                          {ch.token_status}
                         </span>
                       </div>
 
                       {/* Info rows */}
                       <div className="space-y-2 text-xs bg-slate-50 dark:bg-slate-950/50 p-3 rounded-xl border border-slate-200 dark:border-slate-800/80 mb-3">
                         <div className="flex items-center justify-between">
-                          <span className="text-slate-500">Page ID:</span>
+                          <span className="text-slate-500">External ID:</span>
                           <div className="flex items-center gap-1 font-mono text-slate-800 dark:text-slate-300">
-                            <span>{p.page_id}</span>
+                            <span>{ch.external_id}</span>
                             <button
-                              onClick={() => copyToClipboard(p.page_id, p.id)}
+                              onClick={() => copyToClipboard(ch.external_id, ch.id)}
                               className="p-1 hover:text-blue-600 dark:hover:text-white transition-colors"
-                              title="Sao chép Page ID"
+                              title="Sao chép External ID"
                             >
-                              {copiedId === p.id ? (
+                              {copiedId === ch.id ? (
                                 <Check className="h-3 w-3 text-emerald-500 dark:text-emerald-400" />
                               ) : (
                                 <Copy className="h-3 w-3" />
@@ -343,7 +341,7 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
                         <div className="flex items-center justify-between">
                           <span className="text-slate-500">AES Vault Token:</span>
                           <code className="font-mono text-slate-600 dark:text-slate-400 text-[11px]">
-                            {p.masked_token || "EAABsb...OKEN"}
+                            {ch.masked_token || "EAABsb...OKEN"}
                           </code>
                         </div>
                       </div>
@@ -352,7 +350,7 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
                       <div className="space-y-1 mb-4">
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-slate-600 dark:text-slate-400 flex items-center gap-1">
-                            <Zap className="h-3 w-3 text-amber-500 dark:text-amber-400" /> Rate Limit Meta:
+                            <Zap className="h-3 w-3 text-amber-500 dark:text-amber-400" /> Rate Limit Quota:
                           </span>
                           <span
                             className={`font-bold ${
@@ -379,9 +377,9 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
                           />
                         </div>
                         <div className="flex justify-between text-[10px] text-slate-400 dark:text-slate-500 pt-0.5">
-                          <span>Calls: {p.rate_limit_call_count || 0}%</span>
-                          <span>CPU: {p.rate_limit_total_cputime || 0}%</span>
-                          <span>Time: {p.rate_limit_total_time || 0}%</span>
+                          <span>Calls: {ch.rate_limit_call_count || 0}%</span>
+                          <span>CPU: {ch.rate_limit_total_cputime || 0}%</span>
+                          <span>Time: {ch.rate_limit_total_time || 0}%</span>
                         </div>
                       </div>
                     </div>
@@ -389,12 +387,12 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
                     {/* Card Actions */}
                     <div className="pt-2 border-t border-slate-200 dark:border-slate-800/80 flex items-center justify-between gap-2">
                       <span className="text-[10px] text-slate-400 dark:text-slate-500 truncate">
-                        {p.updated_at ? `Cập nhật ${formatDate(p.updated_at)}` : ""}
+                        {ch.updated_at ? `Cập nhật ${formatDate(ch.updated_at)}` : ""}
                       </span>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button
-                          onClick={() => handleVerifyToken(p.id)}
-                          disabled={isVerifying || deletingId === p.id}
+                          onClick={() => handleVerifyToken(ch.id)}
+                          disabled={isVerifying || deletingId === ch.id}
                           className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 border border-slate-200 dark:border-slate-700 transition-all flex items-center gap-1 disabled:opacity-50"
                           title="Kiểm tra trạng thái & hạn dùng của Token"
                         >
@@ -402,12 +400,12 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
                           <span>{isVerifying ? "Đang kiểm tra..." : "Kiểm tra"}</span>
                         </button>
                         <button
-                          onClick={() => handleDeletePage(p)}
-                          disabled={deletingId === p.id || isVerifying}
+                          onClick={() => handleDeleteChannel(ch)}
+                          disabled={deletingId === ch.id || isVerifying}
                           className="p-1.5 rounded-lg text-xs font-semibold bg-rose-50 hover:bg-rose-100 dark:bg-rose-500/10 dark:hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30 transition-all flex items-center justify-center disabled:opacity-50"
-                          title="Xóa Fanpage khỏi hệ thống"
+                          title="Xóa Kênh khỏi hệ thống"
                         >
-                          <Trash2 className={`h-3.5 w-3.5 ${deletingId === p.id ? "animate-pulse" : ""}`} />
+                          <Trash2 className={`h-3.5 w-3.5 ${deletingId === ch.id ? "animate-pulse" : ""}`} />
                         </button>
                       </div>
                     </div>
@@ -427,32 +425,32 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
               <Plus className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">Thêm Fanpage & Mã Hóa Token</h3>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">Thêm Kênh & Mã Hóa Token</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">Token được mã hóa bằng AES-256-GCM trước khi lưu vào Database</p>
             </div>
           </div>
 
           <form onSubmit={handleManualAdd} className="space-y-4 text-xs">
             <div>
-              <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">Facebook Page ID *</label>
+              <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">External ID (Facebook Page ID) *</label>
               <input
                 type="text"
                 required
                 placeholder="Ví dụ: 102938475612345"
-                value={pageId}
-                onChange={(e) => setPageId(e.target.value)}
+                value={externalId}
+                onChange={(e) => setExternalId(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
               />
             </div>
 
             <div>
-              <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">Tên Fanpage *</label>
+              <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">Tên Kênh / Fanpage *</label>
               <input
                 type="text"
                 required
                 placeholder="Ví dụ: PostPilot Official Community"
-                value={pageName}
-                onChange={(e) => setPageName(e.target.value)}
+                value={channelName}
+                onChange={(e) => setChannelName(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500"
               />
             </div>
@@ -469,7 +467,7 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
             </div>
 
             <div>
-              <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">Page Access Token *</label>
+              <label className="block text-slate-700 dark:text-slate-300 font-semibold mb-1">Access Token *</label>
               <textarea
                 required
                 rows={3}
@@ -602,15 +600,17 @@ export function PageManager({ pages, loading, onRefresh }: PageManagerProps) {
               {verifyModalData.debug_info ? (
                 <div className="space-y-2 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-xl border border-slate-200 dark:border-slate-800/80">
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Facebook App:</span>
-                    <span className="text-slate-800 dark:text-slate-200 font-semibold">{verifyModalData.debug_info.application}</span>
+                    <span className="text-slate-500">App ID / Application:</span>
+                    <span className="text-slate-800 dark:text-slate-200 font-semibold">{verifyModalData.debug_info.application || verifyModalData.debug_info.app_id}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Hạn sử dụng:</span>
                     <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
                       {verifyModalData.debug_info.expires_at === 0
                         ? "Vĩnh Viễn (Never Expires)"
-                        : new Date(verifyModalData.debug_info.expires_at * 1000).toLocaleString("vi-VN")}
+                        : verifyModalData.debug_info.expires_at
+                        ? new Date(verifyModalData.debug_info.expires_at * 1000).toLocaleString("vi-VN")
+                        : "Không xác định"}
                     </span>
                   </div>
                   <div>

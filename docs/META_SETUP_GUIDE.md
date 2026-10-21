@@ -39,7 +39,7 @@
 Bạn **không cần** tự gọi tay từng bước trên Postman nữa. Hệ thống Golang của chúng ta đã tích hợp sẵn API tự động làm cả 3 việc:
 1. Đổi `short_lived_user_token` (1 giờ) $\rightarrow$ `long_lived_user_token` (60 ngày).
 2. Gọi `/me/accounts` bằng token 60 ngày để lấy **Permanent Page Access Token** (không bao giờ hết hạn) của tất cả các Fanpage bạn quản lý.
-3. Mã hóa các Token này bằng **AES-256-GCM** và lưu vào bảng `facebook_pages`.
+3. Mã hóa các Token này bằng **AES-256-GCM** và lưu vào bảng `channels`.
 
 Chỉ cần chạy 1 lệnh duy nhất:
 ```bash

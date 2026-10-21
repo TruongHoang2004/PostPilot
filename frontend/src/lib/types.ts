@@ -9,9 +9,8 @@ export interface SystemHealth {
 }
 
 export interface SystemStats {
-  total_pages: number;
-  active_pages: number;
-  total_posts: number;
+  total_channels: number;
+  active_channels: number;
   scheduled_posts: number;
   queued_posts: number;
   published_posts: number;
@@ -20,12 +19,15 @@ export interface SystemStats {
   heavy_queue_depth?: number;
 }
 
-export type TokenStatus = 'ACTIVE' | 'EXPIRED' | 'REVOKED' | 'WARNING';
+export type TokenStatus = 'ACTIVE' | 'EXPIRED' | 'REVOKED' | 'RATE_LIMITED' | 'WARNING';
 
-export interface FacebookPage {
+export type PlatformType = 'FACEBOOK' | 'LINKEDIN' | 'TWITTER' | 'TIKTOK';
+
+export interface Channel {
   id: string;
-  page_id: string;
-  page_name: string;
+  platform: PlatformType;
+  external_id: string;
+  name: string;
   category?: string;
   masked_token?: string;
   token_status: TokenStatus;
@@ -34,6 +36,7 @@ export interface FacebookPage {
   rate_limit_call_count?: number;
   rate_limit_total_time?: number;
   rate_limit_total_cputime?: number;
+  last_checked_at?: string;
   created_at: string;
   updated_at: string;
 }
@@ -44,9 +47,11 @@ export type PostStatus = 'DRAFT' | 'SCHEDULED' | 'QUEUED' | 'PROCESSING' | 'PUBL
 
 export interface Post {
   id: string;
-  page_uuid: string;
-  page_name?: string;
-  fb_post_id?: string;
+  channel_id: string;
+  channel_name?: string;
+  platform?: PlatformType;
+  external_channel_id?: string;
+  external_post_id?: string;
   content: string;
   link_url?: string;
   media_type: MediaType;
@@ -66,14 +71,16 @@ export interface Post {
 export interface PublishLog {
   id: string;
   post_id: string;
+  channel_id?: string;
   attempt_number: number;
-  fb_post_id?: string;
+  action?: string;
   http_status: number;
   error_code?: number;
   error_subcode?: number;
-  error_message?: string;
+  request_summary?: string;
+  response_body?: string;
   duration_ms: number;
-  executed_at: string;
+  created_at: string;
 }
 
 export interface MediaUploadResponse {
@@ -94,18 +101,18 @@ export interface AIGenerateResponse {
 
 export interface TokenDebugInfo {
   app_id: string;
-  type: string;
-  application: string;
-  data_access_expires_at: number;
-  expires_at: number;
+  type?: string;
+  application?: string;
+  data_access_expires_at?: number;
+  expires_at?: number;
   is_valid: boolean;
-  issued_at: number;
-  scopes: string[];
-  user_id: string;
+  issued_at?: number;
+  scopes?: string[];
+  user_id?: string;
 }
 
 export interface VerifyTokenResponse {
-  page_uuid: string;
+  channel_id: string;
   token_status: TokenStatus;
   is_valid: boolean;
   debug_info?: TokenDebugInfo;

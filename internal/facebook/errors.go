@@ -21,6 +21,17 @@ func (e *GraphAPIError) Error() string {
 		e.HTTPStatus, e.Code, e.ErrorSubcode, e.Type, e.FBTraceID, e.Message)
 }
 
+// ErrorCode trả về mã lỗi chuẩn từ nền tảng (triển khai domain.PublisherError).
+func (e *GraphAPIError) ErrorCode() int {
+	return e.Code
+}
+
+// Subcode trả về mã lỗi phụ từ nền tảng.
+func (e *GraphAPIError) Subcode() int {
+	return e.ErrorSubcode
+}
+
+
 // IsTokenInvalid kiểm tra xem lỗi có phải do Page Access Token hết hạn, đổi mật khẩu hoặc bị thu hồi quyền không.
 // Theo tài liệu Meta: Code 190 (OAuthException) hoặc Code 102 (Session key invalid).
 func (e *GraphAPIError) IsTokenInvalid() bool {

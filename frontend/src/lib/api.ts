@@ -1,7 +1,8 @@
 import {
   AIGenerateResponse,
-  FacebookPage,
+  Channel,
   MediaUploadResponse,
+  PlatformType,
   Post,
   PublishLog,
   SystemHealth,
@@ -38,36 +39,37 @@ export const api = {
     return handleResponse<SystemStats>(res);
   },
 
-  // 2. Facebook Pages & OAuth
-  async getPages(): Promise<FacebookPage[]> {
-    const res = await fetch(`${API_BASE}/api/v1/pages`, { cache: "no-store" });
-    const data = await handleResponse<{ pages: FacebookPage[] }>(res);
-    return data.pages || [];
+  // 2. Channels & Platform OAuth
+  async getChannels(): Promise<Channel[]> {
+    const res = await fetch(`${API_BASE}/api/v1/channels`, { cache: "no-store" });
+    const data = await handleResponse<{ channels: Channel[] }>(res);
+    return data.channels || [];
   },
 
-  async createPage(page: {
-    page_id: string;
-    page_name: string;
+  async createChannel(channel: {
+    platform?: PlatformType;
+    external_id: string;
+    name: string;
     category?: string;
     access_token: string;
-  }): Promise<FacebookPage> {
-    const res = await fetch(`${API_BASE}/api/v1/pages`, {
+  }): Promise<Channel> {
+    const res = await fetch(`${API_BASE}/api/v1/channels`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(page),
+      body: JSON.stringify(channel),
     });
-    return handleResponse<FacebookPage>(res);
+    return handleResponse<Channel>(res);
   },
 
-  async deletePage(pageUUID: string): Promise<{ message: string; page_uuid: string }> {
-    const res = await fetch(`${API_BASE}/api/v1/pages/${pageUUID}`, {
+  async deleteChannel(channelID: string): Promise<{ message: string; channel_id: string }> {
+    const res = await fetch(`${API_BASE}/api/v1/channels/${channelID}`, {
       method: "DELETE",
     });
-    return handleResponse<{ message: string; page_uuid: string }>(res);
+    return handleResponse<{ message: string; channel_id: string }>(res);
   },
 
-  async verifyPageToken(pageUUID: string): Promise<VerifyTokenResponse> {
-    const res = await fetch(`${API_BASE}/api/v1/pages/${pageUUID}/verify-token`, {
+  async verifyChannelToken(channelID: string): Promise<VerifyTokenResponse> {
+    const res = await fetch(`${API_BASE}/api/v1/channels/${channelID}/verify-token`, {
       method: "POST",
     });
     return handleResponse<VerifyTokenResponse>(res);
@@ -76,7 +78,7 @@ export const api = {
   async exchangeUserToken(shortLivedUserToken: string): Promise<{
     message: string;
     imported_count: number;
-    pages: FacebookPage[];
+    channels: Channel[];
   }> {
     const res = await fetch(`${API_BASE}/api/v1/auth/facebook/exchange-token`, {
       method: "POST",
@@ -115,7 +117,7 @@ export const api = {
   },
 
   async createPost(payload: {
-    page_uuid: string;
+    channel_id: string;
     content: string;
     media_type: string;
     link_url?: string;

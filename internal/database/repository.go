@@ -15,27 +15,27 @@ import (
 	"github.com/happy-darwin/fb-autoposter/internal/domain"
 )
 
-// Store định nghĩa interface lưu trữ dữ liệu cho hệ thống.
+// Store định nghĩa Output Port lưu trữ dữ liệu cho toàn bộ hệ thống.
 type Store interface {
-	// Quản lý Fanpage
-	UpsertPage(ctx context.Context, page *domain.FacebookPage) (*domain.FacebookPage, error)
-	ListPages(ctx context.Context) ([]domain.FacebookPage, error)
-	GetPageByUUID(ctx context.Context, uuid string) (*domain.FacebookPage, error)
-	DeletePage(ctx context.Context, uuid string) error
-	UpdatePageTokenStatus(ctx context.Context, uuid string, status string, checkedAt time.Time) error
-	UpdatePageRateLimit(ctx context.Context, uuid string, usage domain.RateLimitUsage) error
+	// Quản lý Kênh xuất bản (Channels)
+	UpsertChannel(ctx context.Context, channel *domain.Channel) (*domain.Channel, error)
+	ListChannels(ctx context.Context) ([]domain.Channel, error)
+	GetChannelByID(ctx context.Context, id string) (*domain.Channel, error)
+	DeleteChannel(ctx context.Context, id string) error
+	UpdateChannelTokenStatus(ctx context.Context, id string, status string, checkedAt time.Time) error
+	UpdateChannelRateLimit(ctx context.Context, id string, usage domain.RateLimitUsage) error
 
-	// Quản lý Bài viết & Lập lịch
+	// Quản lý Bài viết & Lập lịch (Post & Publishing Core)
 	CreatePost(ctx context.Context, post *domain.Post) (*domain.Post, error)
 	GetPostByID(ctx context.Context, id string) (*domain.Post, error)
 	ListPosts(ctx context.Context, statusFilter string, limit int) ([]domain.Post, error)
 	ClaimDuePosts(ctx context.Context, now time.Time, batchSize int) ([]domain.Post, error)
 	MarkPostProcessing(ctx context.Context, postID string) error
-	MarkPostPublished(ctx context.Context, postID string, fbPostID string, publishedAt time.Time) error
+	MarkPostPublished(ctx context.Context, postID string, externalPostID string, publishedAt time.Time) error
 	MarkPostFailedOrRetry(ctx context.Context, postID string, retryCount int, nextRetryAt *time.Time, finalStatus string, errCode int, errMsg string) error
 	CancelPost(ctx context.Context, postID string) error
 
-	// Quản lý Audit Log & Media
+	// Quản lý Audit Log & Media Assets
 	InsertPublishLog(ctx context.Context, logEntry *domain.PublishLog) error
 	ListPublishLogsByPost(ctx context.Context, postID string) ([]domain.PublishLog, error)
 	CreateMediaAsset(ctx context.Context, asset *domain.MediaAsset) (*domain.MediaAsset, error)
@@ -52,13 +52,14 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{db: db}
 }
 
-func (s *PostgresStore) UpsertPage(ctx context.Context, p *domain.FacebookPage) (*domain.FacebookPage, error) {
+func (s *PostgresStore) UpsertChannel(ctx context.Context, c *domain.Channel) (*domain.Channel, error) {
+	c.Platform = domain.NormalizePlatform(c.Platform)
 	query := `
-	INSERT INTO facebook_pages (
-		page_id, page_name, category, encrypted_access_token, token_status, is_active, updated_at
-	) VALUES ($1, $2, $3, $4, $5, $6, NOW())
-	ON CONFLICT (page_id) DO UPDATE SET
-		page_name = EXCLUDED.page_name,
+	INSERT INTO channels (
+		platform, external_id, name, category, encrypted_access_token, token_status, is_active, updated_at
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+	ON CONFLICT (platform, external_id) DO UPDATE SET
+		name = EXCLUDED.name,
 		category = EXCLUDED.category,
 		encrypted_access_token = EXCLUDED.encrypted_access_token,
 		token_status = EXCLUDED.token_status,
@@ -69,23 +70,23 @@ func (s *PostgresStore) UpsertPage(ctx context.Context, p *domain.FacebookPage) 
 	var createdAtStr, updatedAtStr string
 	err := s.db.QueryRowContext(
 		ctx, query,
-		p.PageID, p.PageName, p.Category, p.EncryptedAccessToken, p.TokenStatus, p.IsActive,
-	).Scan(&p.ID, &createdAtStr, &updatedAtStr)
+		string(c.Platform), c.ExternalID, c.Name, c.Category, c.EncryptedAccessToken, c.TokenStatus, c.IsActive,
+	).Scan(&c.ID, &createdAtStr, &updatedAtStr)
 	if err != nil {
 		return nil, err
 	}
-	p.CreatedAt = parsePGTime(createdAtStr)
-	p.UpdatedAt = parsePGTime(updatedAtStr)
-	return p, nil
+	c.CreatedAt = parsePGTime(createdAtStr)
+	c.UpdatedAt = parsePGTime(updatedAtStr)
+	return c, nil
 }
 
-func (s *PostgresStore) ListPages(ctx context.Context) ([]domain.FacebookPage, error) {
+func (s *PostgresStore) ListChannels(ctx context.Context) ([]domain.Channel, error) {
 	query := `
-	SELECT id, page_id, page_name, category, encrypted_access_token, token_status,
+	SELECT id, platform, external_id, name, category, encrypted_access_token, token_status,
 	       COALESCE(last_checked_at::text, ''),
 	       rate_limit_call_count::text, rate_limit_total_time::text, rate_limit_total_cputime::text,
 	       is_active::text, created_at::text, updated_at::text
-	FROM facebook_pages
+	FROM channels
 	ORDER BY created_at DESC;`
 
 	rows, err := s.db.QueryContext(ctx, query)
@@ -94,85 +95,93 @@ func (s *PostgresStore) ListPages(ctx context.Context) ([]domain.FacebookPage, e
 	}
 	defer rows.Close()
 
-	var pages []domain.FacebookPage
+	var channels []domain.Channel
 	for rows.Next() {
-		var p domain.FacebookPage
-		var lastCheckedStr, callStr, timeStr, cpuStr, activeStr, createdStr, updatedStr string
+		var c domain.Channel
+		var platformStr, lastCheckedStr, callStr, timeStr, cpuStr, activeStr, createdStr, updatedStr string
 		if err := rows.Scan(
-			&p.ID, &p.PageID, &p.PageName, &p.Category, &p.EncryptedAccessToken, &p.TokenStatus,
+			&c.ID, &platformStr, &c.ExternalID, &c.Name, &c.Category, &c.EncryptedAccessToken, &c.TokenStatus,
 			&lastCheckedStr, &callStr, &timeStr, &cpuStr, &activeStr, &createdStr, &updatedStr,
 		); err != nil {
 			return nil, err
 		}
+		c.Platform = domain.NormalizePlatform(domain.PlatformType(platformStr))
 		if lastCheckedStr != "" {
 			t := parsePGTime(lastCheckedStr)
-			p.LastCheckedAt = &t
+			c.LastCheckedAt = &t
 		}
-		p.RateLimitCallCount, _ = strconv.Atoi(callStr)
-		p.RateLimitTotalTime, _ = strconv.Atoi(timeStr)
-		p.RateLimitTotalCPU, _ = strconv.Atoi(cpuStr)
-		p.IsActive = activeStr == "true" || activeStr == "t"
-		p.CreatedAt = parsePGTime(createdStr)
-		p.UpdatedAt = parsePGTime(updatedStr)
-		pages = append(pages, p)
+		c.RateLimitCallCount, _ = strconv.Atoi(callStr)
+		c.RateLimitTotalTime, _ = strconv.Atoi(timeStr)
+		c.RateLimitTotalCPU, _ = strconv.Atoi(cpuStr)
+		c.IsActive = activeStr == "true" || activeStr == "t"
+		c.CreatedAt = parsePGTime(createdStr)
+		c.UpdatedAt = parsePGTime(updatedAtOrCreated(updatedStr, createdStr))
+		channels = append(channels, c)
 	}
-	return pages, nil
+	return channels, nil
 }
 
-func (s *PostgresStore) GetPageByUUID(ctx context.Context, uuid string) (*domain.FacebookPage, error) {
+func (s *PostgresStore) GetChannelByID(ctx context.Context, id string) (*domain.Channel, error) {
 	query := `
-	SELECT id, page_id, page_name, category, encrypted_access_token, token_status,
+	SELECT id, platform, external_id, name, category, encrypted_access_token, token_status,
+	       COALESCE(last_checked_at::text, ''),
 	       rate_limit_call_count::text, rate_limit_total_time::text, rate_limit_total_cputime::text,
 	       is_active::text, created_at::text, updated_at::text
-	FROM facebook_pages
+	FROM channels
 	WHERE id = $1;`
 
-	var p domain.FacebookPage
-	var callStr, timeStr, cpuStr, activeStr, createdStr, updatedStr string
-	err := s.db.QueryRowContext(ctx, query, uuid).Scan(
-		&p.ID, &p.PageID, &p.PageName, &p.Category, &p.EncryptedAccessToken, &p.TokenStatus,
+	var c domain.Channel
+	var platformStr, lastCheckedStr, callStr, timeStr, cpuStr, activeStr, createdStr, updatedStr string
+	err := s.db.QueryRowContext(ctx, query, id).Scan(
+		&c.ID, &platformStr, &c.ExternalID, &c.Name, &c.Category, &c.EncryptedAccessToken, &c.TokenStatus,
+		&lastCheckedStr,
 		&callStr, &timeStr, &cpuStr, &activeStr, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return nil, err
 	}
-	p.RateLimitCallCount, _ = strconv.Atoi(callStr)
-	p.RateLimitTotalTime, _ = strconv.Atoi(timeStr)
-	p.RateLimitTotalCPU, _ = strconv.Atoi(cpuStr)
-	p.IsActive = activeStr == "true" || activeStr == "t"
-	p.CreatedAt = parsePGTime(createdStr)
-	p.UpdatedAt = parsePGTime(updatedStr)
-	return &p, nil
+	c.Platform = domain.NormalizePlatform(domain.PlatformType(platformStr))
+	if lastCheckedStr != "" {
+		t := parsePGTime(lastCheckedStr)
+		c.LastCheckedAt = &t
+	}
+	c.RateLimitCallCount, _ = strconv.Atoi(callStr)
+	c.RateLimitTotalTime, _ = strconv.Atoi(timeStr)
+	c.RateLimitTotalCPU, _ = strconv.Atoi(cpuStr)
+	c.IsActive = activeStr == "true" || activeStr == "t"
+	c.CreatedAt = parsePGTime(createdStr)
+	c.UpdatedAt = parsePGTime(updatedStr)
+	return &c, nil
 }
 
-func (s *PostgresStore) DeletePage(ctx context.Context, uuid string) error {
-	res, err := s.db.ExecContext(ctx, "DELETE FROM facebook_pages WHERE id = $1", uuid)
+func (s *PostgresStore) DeleteChannel(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, "DELETE FROM channels WHERE id = $1", id)
 	if err != nil {
 		return err
 	}
 	rows, err := res.RowsAffected()
 	if err == nil && rows == 0 {
-		return errors.New("page not found")
+		return errors.New("channel not found")
 	}
 	return nil
 }
 
-func (s *PostgresStore) UpdatePageTokenStatus(ctx context.Context, uuid string, status string, checkedAt time.Time) error {
+func (s *PostgresStore) UpdateChannelTokenStatus(ctx context.Context, id string, status string, checkedAt time.Time) error {
 	_, err := s.db.ExecContext(
 		ctx,
-		"UPDATE facebook_pages SET token_status = $1, last_checked_at = $2, updated_at = NOW() WHERE id = $3",
-		status, checkedAt, uuid,
+		"UPDATE channels SET token_status = $1, last_checked_at = $2, updated_at = NOW() WHERE id = $3",
+		status, checkedAt, id,
 	)
 	return err
 }
 
-func (s *PostgresStore) UpdatePageRateLimit(ctx context.Context, uuid string, usage domain.RateLimitUsage) error {
+func (s *PostgresStore) UpdateChannelRateLimit(ctx context.Context, id string, usage domain.RateLimitUsage) error {
 	_, err := s.db.ExecContext(
 		ctx,
-		`UPDATE facebook_pages
+		`UPDATE channels
 		 SET rate_limit_call_count = $1, rate_limit_total_time = $2, rate_limit_total_cputime = $3, updated_at = NOW()
 		 WHERE id = $4`,
-		usage.CallCount, usage.TotalTime, usage.TotalCPUTime, uuid,
+		usage.CallCount, usage.TotalTime, usage.TotalCPUTime, id,
 	)
 	return err
 }
@@ -192,7 +201,7 @@ func (s *PostgresStore) CreatePost(ctx context.Context, post *domain.Post) (*dom
 
 	query := `
 	INSERT INTO posts (
-		page_uuid, content, link_url, media_type, media_urls, status, queue_tier,
+		channel_id, content, link_url, media_type, media_urls, status, queue_tier,
 		scheduled_at, max_retries, created_by
 	) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10)
 	RETURNING id, created_at::text, updated_at::text;`
@@ -200,7 +209,7 @@ func (s *PostgresStore) CreatePost(ctx context.Context, post *domain.Post) (*dom
 	var createdStr, updatedStr string
 	err = s.db.QueryRowContext(
 		ctx, query,
-		post.PageUUID, post.Content, post.LinkURL, post.MediaType, string(mediaJSON),
+		post.ChannelID, post.Content, post.LinkURL, post.MediaType, string(mediaJSON),
 		post.Status, post.QueueTier, post.ScheduledAt, post.MaxRetries, post.CreatedBy,
 	).Scan(&post.ID, &createdStr, &updatedStr)
 	if err != nil {
@@ -213,32 +222,37 @@ func (s *PostgresStore) CreatePost(ctx context.Context, post *domain.Post) (*dom
 
 func (s *PostgresStore) GetPostByID(ctx context.Context, id string) (*domain.Post, error) {
 	query := `
-	SELECT p.id, p.page_uuid, COALESCE(fp.page_name, ''), COALESCE(fp.page_id, ''),
+	SELECT p.id, p.channel_id, COALESCE(c.name, ''), COALESCE(c.platform, 'FACEBOOK'), COALESCE(c.external_id, ''),
 	       p.content, p.link_url, p.media_type, p.media_urls::text, p.status, p.queue_tier,
-	       p.scheduled_at::text, COALESCE(p.published_at::text, ''), p.fb_post_id,
-	       p.retry_count::text, p.max_retries::text, p.last_error_code::text, p.last_error_message,
+	       p.scheduled_at::text, COALESCE(p.published_at::text, ''), p.external_post_id,
+	       p.retry_count::text, p.max_retries::text, COALESCE(p.next_retry_at::text, ''), p.last_error_code::text, p.last_error_message,
 	       p.created_by, p.created_at::text, p.updated_at::text
 	FROM posts p
-	LEFT JOIN facebook_pages fp ON fp.id = p.page_uuid
+	LEFT JOIN channels c ON c.id = p.channel_id
 	WHERE p.id = $1;`
 
 	var post domain.Post
-	var mediaStr, schedStr, pubStr, retryStr, maxRetryStr, errCodeStr, createdStr, updatedStr string
+	var platformStr, mediaStr, schedStr, pubStr, retryStr, maxRetryStr, nextRetryStr, errCodeStr, createdStr, updatedStr string
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&post.ID, &post.PageUUID, &post.PageName, &post.FBPageID,
+		&post.ID, &post.ChannelID, &post.ChannelName, &platformStr, &post.ExternalChannelID,
 		&post.Content, &post.LinkURL, &post.MediaType, &mediaStr, &post.Status, &post.QueueTier,
-		&schedStr, &pubStr, &post.FBPostID,
-		&retryStr, &maxRetryStr, &errCodeStr, &post.LastErrorMessage,
+		&schedStr, &pubStr, &post.ExternalPostID,
+		&retryStr, &maxRetryStr, &nextRetryStr, &errCodeStr, &post.LastErrorMessage,
 		&post.CreatedBy, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return nil, err
 	}
+	post.Platform = domain.NormalizePlatform(domain.PlatformType(platformStr))
 	_ = json.Unmarshal([]byte(mediaStr), &post.MediaURLs)
 	post.ScheduledAt = parsePGTime(schedStr)
 	if pubStr != "" {
 		t := parsePGTime(pubStr)
 		post.PublishedAt = &t
+	}
+	if nextRetryStr != "" {
+		t := parsePGTime(nextRetryStr)
+		post.NextRetryAt = &t
 	}
 	post.RetryCount, _ = strconv.Atoi(retryStr)
 	post.MaxRetries, _ = strconv.Atoi(maxRetryStr)
@@ -256,13 +270,13 @@ func (s *PostgresStore) ListPosts(ctx context.Context, statusFilter string, limi
 	var err error
 
 	baseQuery := `
-	SELECT p.id, p.page_uuid, COALESCE(fp.page_name, ''), COALESCE(fp.page_id, ''),
+	SELECT p.id, p.channel_id, COALESCE(c.name, ''), COALESCE(c.platform, 'FACEBOOK'), COALESCE(c.external_id, ''),
 	       p.content, p.link_url, p.media_type, p.media_urls::text, p.status, p.queue_tier,
-	       p.scheduled_at::text, COALESCE(p.published_at::text, ''), p.fb_post_id,
-	       p.retry_count::text, p.max_retries::text, p.last_error_code::text, p.last_error_message,
+	       p.scheduled_at::text, COALESCE(p.published_at::text, ''), p.external_post_id,
+	       p.retry_count::text, p.max_retries::text, COALESCE(p.next_retry_at::text, ''), p.last_error_code::text, p.last_error_message,
 	       p.created_by, p.created_at::text, p.updated_at::text
 	FROM posts p
-	LEFT JOIN facebook_pages fp ON fp.id = p.page_uuid `
+	LEFT JOIN channels c ON c.id = p.channel_id `
 
 	if statusFilter != "" {
 		rows, err = s.db.QueryContext(ctx, baseQuery+"WHERE p.status = $1 ORDER BY p.scheduled_at DESC LIMIT $2", statusFilter, limit)
@@ -277,21 +291,26 @@ func (s *PostgresStore) ListPosts(ctx context.Context, statusFilter string, limi
 	var list []domain.Post
 	for rows.Next() {
 		var post domain.Post
-		var mediaStr, schedStr, pubStr, retryStr, maxRetryStr, errCodeStr, createdStr, updatedStr string
+		var platformStr, mediaStr, schedStr, pubStr, retryStr, maxRetryStr, nextRetryStr, errCodeStr, createdStr, updatedStr string
 		if err := rows.Scan(
-			&post.ID, &post.PageUUID, &post.PageName, &post.FBPageID,
+			&post.ID, &post.ChannelID, &post.ChannelName, &platformStr, &post.ExternalChannelID,
 			&post.Content, &post.LinkURL, &post.MediaType, &mediaStr, &post.Status, &post.QueueTier,
-			&schedStr, &pubStr, &post.FBPostID,
-			&retryStr, &maxRetryStr, &errCodeStr, &post.LastErrorMessage,
+			&schedStr, &pubStr, &post.ExternalPostID,
+			&retryStr, &maxRetryStr, &nextRetryStr, &errCodeStr, &post.LastErrorMessage,
 			&post.CreatedBy, &createdStr, &updatedStr,
 		); err != nil {
 			return nil, err
 		}
+		post.Platform = domain.NormalizePlatform(domain.PlatformType(platformStr))
 		_ = json.Unmarshal([]byte(mediaStr), &post.MediaURLs)
 		post.ScheduledAt = parsePGTime(schedStr)
 		if pubStr != "" {
 			t := parsePGTime(pubStr)
 			post.PublishedAt = &t
+		}
+		if nextRetryStr != "" {
+			t := parsePGTime(nextRetryStr)
+			post.NextRetryAt = &t
 		}
 		post.RetryCount, _ = strconv.Atoi(retryStr)
 		post.MaxRetries, _ = strconv.Atoi(maxRetryStr)
@@ -320,7 +339,7 @@ func (s *PostgresStore) ClaimDuePosts(ctx context.Context, now time.Time, batchS
 	SET status = 'QUEUED', updated_at = NOW()
 	FROM due
 	WHERE p.id = due.id
-	RETURNING p.id, p.page_uuid, p.queue_tier, p.retry_count::text;`
+	RETURNING p.id, p.channel_id, p.queue_tier, p.retry_count::text;`
 
 	rows, err := s.db.QueryContext(ctx, query, now, batchSize)
 	if err != nil {
@@ -332,7 +351,7 @@ func (s *PostgresStore) ClaimDuePosts(ctx context.Context, now time.Time, batchS
 	for rows.Next() {
 		var p domain.Post
 		var retryStr string
-		if err := rows.Scan(&p.ID, &p.PageUUID, &p.QueueTier, &retryStr); err != nil {
+		if err := rows.Scan(&p.ID, &p.ChannelID, &p.QueueTier, &retryStr); err != nil {
 			return nil, err
 		}
 		p.RetryCount, _ = strconv.Atoi(retryStr)
@@ -347,14 +366,14 @@ func (s *PostgresStore) MarkPostProcessing(ctx context.Context, postID string) e
 	return err
 }
 
-func (s *PostgresStore) MarkPostPublished(ctx context.Context, postID string, fbPostID string, publishedAt time.Time) error {
+func (s *PostgresStore) MarkPostPublished(ctx context.Context, postID string, externalPostID string, publishedAt time.Time) error {
 	_, err := s.db.ExecContext(
 		ctx,
 		`UPDATE posts
-		 SET status = 'PUBLISHED', fb_post_id = $1, published_at = $2,
+		 SET status = 'PUBLISHED', external_post_id = $1, published_at = $2,
 		     last_error_code = 0, last_error_message = '', updated_at = NOW()
 		 WHERE id = $3`,
-		fbPostID, publishedAt, postID,
+		externalPostID, publishedAt, postID,
 	)
 	return err
 }
@@ -372,33 +391,44 @@ func (s *PostgresStore) MarkPostFailedOrRetry(ctx context.Context, postID string
 }
 
 func (s *PostgresStore) CancelPost(ctx context.Context, postID string) error {
-	_, err := s.db.ExecContext(
+	res, err := s.db.ExecContext(
 		ctx,
 		"UPDATE posts SET status = 'CANCELLED', updated_at = NOW() WHERE id = $1 AND status IN ('DRAFT', 'SCHEDULED', 'FAILED')",
 		postID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err == nil && rows == 0 {
+		existing, getErr := s.GetPostByID(ctx, postID)
+		if getErr != nil || existing == nil {
+			return fmt.Errorf("post %s not found", postID)
+		}
+		return fmt.Errorf("post %s cannot be cancelled (status: %s)", postID, existing.Status)
+	}
+	return nil
 }
 
 func (s *PostgresStore) InsertPublishLog(ctx context.Context, l *domain.PublishLog) error {
 	query := `
 	INSERT INTO publish_logs (
-		post_id, page_uuid, attempt_number, action, http_status,
-		fb_error_code, fb_error_subcode, request_summary, response_body, duration_ms
+		post_id, channel_id, attempt_number, action, http_status,
+		error_code, error_subcode, request_summary, response_body, duration_ms
 	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);`
 
 	_, err := s.db.ExecContext(
 		ctx, query,
-		l.PostID, l.PageUUID, l.AttemptNumber, l.Action, l.HTTPStatus,
-		l.FBErrorCode, l.FBErrorSubcode, l.RequestSummary, l.ResponseBody, l.DurationMs,
+		l.PostID, l.ChannelID, l.AttemptNumber, l.Action, l.HTTPStatus,
+		l.ErrorCode, l.ErrorSubcode, l.RequestSummary, l.ResponseBody, l.DurationMs,
 	)
 	return err
 }
 
 func (s *PostgresStore) ListPublishLogsByPost(ctx context.Context, postID string) ([]domain.PublishLog, error) {
 	query := `
-	SELECT id, post_id, page_uuid, attempt_number::text, action, http_status::text,
-	       fb_error_code::text, fb_error_subcode::text, request_summary, response_body,
+	SELECT id, post_id, channel_id, attempt_number::text, action, http_status::text,
+	       error_code::text, error_subcode::text, request_summary, response_body,
 	       duration_ms::text, created_at::text
 	FROM publish_logs
 	WHERE post_id = $1
@@ -415,15 +445,15 @@ func (s *PostgresStore) ListPublishLogsByPost(ctx context.Context, postID string
 		var l domain.PublishLog
 		var attStr, httpStr, errStr, subStr, durStr, createdStr string
 		if err := rows.Scan(
-			&l.ID, &l.PostID, &l.PageUUID, &attStr, &l.Action, &httpStr,
+			&l.ID, &l.PostID, &l.ChannelID, &attStr, &l.Action, &httpStr,
 			&errStr, &subStr, &l.RequestSummary, &l.ResponseBody, &durStr, &createdStr,
 		); err != nil {
 			return nil, err
 		}
 		l.AttemptNumber, _ = strconv.Atoi(attStr)
 		l.HTTPStatus, _ = strconv.Atoi(httpStr)
-		l.FBErrorCode, _ = strconv.Atoi(errStr)
-		l.FBErrorSubcode, _ = strconv.Atoi(subStr)
+		l.ErrorCode, _ = strconv.Atoi(errStr)
+		l.ErrorSubcode, _ = strconv.Atoi(subStr)
 		l.DurationMs, _ = strconv.ParseInt(durStr, 10, 64)
 		l.CreatedAt = parsePGTime(createdStr)
 		logs = append(logs, l)
@@ -451,26 +481,33 @@ func (s *PostgresStore) CreateMediaAsset(ctx context.Context, asset *domain.Medi
 
 func (s *PostgresStore) GetSystemStats(ctx context.Context) (*domain.SystemStats, error) {
 	stats := &domain.SystemStats{}
-	var totalPages, activePages, sched, queued, pub, failed string
+	var totalChannels, activeChannels, sched, queued, pub, failed string
 	query := `
 	SELECT
-		(SELECT COUNT(*)::text FROM facebook_pages),
-		(SELECT COUNT(*)::text FROM facebook_pages WHERE token_status = 'ACTIVE' AND is_active = TRUE),
+		(SELECT COUNT(*)::text FROM channels),
+		(SELECT COUNT(*)::text FROM channels WHERE token_status = 'ACTIVE' AND is_active = TRUE),
 		(SELECT COUNT(*)::text FROM posts WHERE status = 'SCHEDULED'),
 		(SELECT COUNT(*)::text FROM posts WHERE status IN ('QUEUED', 'PROCESSING')),
 		(SELECT COUNT(*)::text FROM posts WHERE status = 'PUBLISHED'),
 		(SELECT COUNT(*)::text FROM posts WHERE status = 'FAILED');`
 
-	if err := s.db.QueryRowContext(ctx, query).Scan(&totalPages, &activePages, &sched, &queued, &pub, &failed); err != nil {
+	if err := s.db.QueryRowContext(ctx, query).Scan(&totalChannels, &activeChannels, &sched, &queued, &pub, &failed); err != nil {
 		return stats, err
 	}
-	stats.TotalPages, _ = strconv.Atoi(totalPages)
-	stats.ActivePages, _ = strconv.Atoi(activePages)
+	stats.TotalChannels, _ = strconv.Atoi(totalChannels)
+	stats.ActiveChannels, _ = strconv.Atoi(activeChannels)
 	stats.ScheduledPosts, _ = strconv.Atoi(sched)
 	stats.QueuedPosts, _ = strconv.Atoi(queued)
 	stats.PublishedPosts, _ = strconv.Atoi(pub)
 	stats.FailedPosts, _ = strconv.Atoi(failed)
 	return stats, nil
+}
+
+func updatedAtOrCreated(updated, created string) string {
+	if updated != "" {
+		return updated
+	}
+	return created
 }
 
 func parsePGTime(raw string) time.Time {
@@ -495,19 +532,19 @@ func parsePGTime(raw string) time.Time {
 // ============================================================================
 
 type InMemoryStore struct {
-	mu    sync.RWMutex
-	pages map[string]*domain.FacebookPage
-	posts map[string]*domain.Post
-	logs  map[string][]domain.PublishLog
-	media map[string]*domain.MediaAsset
+	mu       sync.RWMutex
+	channels map[string]*domain.Channel
+	posts    map[string]*domain.Post
+	logs     map[string][]domain.PublishLog
+	media    map[string]*domain.MediaAsset
 }
 
 func NewInMemoryStore() *InMemoryStore {
 	return &InMemoryStore{
-		pages: make(map[string]*domain.FacebookPage),
-		posts: make(map[string]*domain.Post),
-		logs:  make(map[string][]domain.PublishLog),
-		media: make(map[string]*domain.MediaAsset),
+		channels: make(map[string]*domain.Channel),
+		posts:    make(map[string]*domain.Post),
+		logs:     make(map[string][]domain.PublishLog),
+		media:    make(map[string]*domain.MediaAsset),
 	}
 }
 
@@ -523,101 +560,102 @@ func newUUID() string {
 	)
 }
 
-func (m *InMemoryStore) UpsertPage(ctx context.Context, page *domain.FacebookPage) (*domain.FacebookPage, error) {
+func (m *InMemoryStore) UpsertChannel(ctx context.Context, channel *domain.Channel) (*domain.Channel, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for _, existing := range m.pages {
-		if existing.PageID == page.PageID {
-			existing.PageName = page.PageName
-			existing.Category = page.Category
-			existing.EncryptedAccessToken = page.EncryptedAccessToken
-			existing.TokenStatus = page.TokenStatus
-			existing.IsActive = page.IsActive
+	channel.Platform = domain.NormalizePlatform(channel.Platform)
+
+	for _, existing := range m.channels {
+		if existing.Platform == channel.Platform && existing.ExternalID == channel.ExternalID {
+			existing.Name = channel.Name
+			existing.Category = channel.Category
+			existing.EncryptedAccessToken = channel.EncryptedAccessToken
+			existing.TokenStatus = channel.TokenStatus
+			existing.IsActive = channel.IsActive
 			existing.UpdatedAt = time.Now().UTC()
 			cp := *existing
 			return &cp, nil
 		}
 	}
 
-	if page.ID == "" {
-		page.ID = newUUID()
+	if channel.ID == "" {
+		channel.ID = newUUID()
 	}
 	now := time.Now().UTC()
-	page.CreatedAt = now
-	page.UpdatedAt = now
-	cp := *page
-	m.pages[cp.ID] = &cp
+	channel.CreatedAt = now
+	channel.UpdatedAt = now
+	cp := *channel
+	m.channels[cp.ID] = &cp
 	return &cp, nil
 }
 
-func (m *InMemoryStore) ListPages(ctx context.Context) ([]domain.FacebookPage, error) {
+func (m *InMemoryStore) ListChannels(ctx context.Context) ([]domain.Channel, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	out := make([]domain.FacebookPage, 0, len(m.pages))
-	for _, p := range m.pages {
-		out = append(out, *p)
+	out := make([]domain.Channel, 0, len(m.channels))
+	for _, c := range m.channels {
+		out = append(out, *c)
 	}
 	return out, nil
 }
 
-func (m *InMemoryStore) GetPageByUUID(ctx context.Context, uuid string) (*domain.FacebookPage, error) {
+func (m *InMemoryStore) GetChannelByID(ctx context.Context, id string) (*domain.Channel, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	p, ok := m.pages[uuid]
+	c, ok := m.channels[id]
 	if !ok {
-		return nil, errors.New("page not found")
+		return nil, errors.New("channel not found")
 	}
-	cp := *p
+	cp := *c
 	return &cp, nil
 }
 
-func (m *InMemoryStore) DeletePage(ctx context.Context, uuid string) error {
+func (m *InMemoryStore) DeleteChannel(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, ok := m.pages[uuid]; !ok {
-		return errors.New("page not found")
+	if _, ok := m.channels[id]; !ok {
+		return errors.New("channel not found")
 	}
-	delete(m.pages, uuid)
+	delete(m.channels, id)
 
-	// Xóa các posts liên quan thuộc page_uuid này
 	for postID, post := range m.posts {
-		if post.PageUUID == uuid {
+		if post.ChannelID == id {
 			delete(m.posts, postID)
 		}
 	}
 	return nil
 }
 
-func (m *InMemoryStore) UpdatePageTokenStatus(ctx context.Context, uuid string, status string, checkedAt time.Time) error {
+func (m *InMemoryStore) UpdateChannelTokenStatus(ctx context.Context, id string, status string, checkedAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	p, ok := m.pages[uuid]
+	c, ok := m.channels[id]
 	if !ok {
-		return errors.New("page not found")
+		return errors.New("channel not found")
 	}
-	p.TokenStatus = status
-	p.LastCheckedAt = &checkedAt
-	p.UpdatedAt = time.Now().UTC()
+	c.TokenStatus = status
+	c.LastCheckedAt = &checkedAt
+	c.UpdatedAt = time.Now().UTC()
 	return nil
 }
 
-func (m *InMemoryStore) UpdatePageRateLimit(ctx context.Context, uuid string, usage domain.RateLimitUsage) error {
+func (m *InMemoryStore) UpdateChannelRateLimit(ctx context.Context, id string, usage domain.RateLimitUsage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	p, ok := m.pages[uuid]
+	c, ok := m.channels[id]
 	if !ok {
-		return errors.New("page not found")
+		return errors.New("channel not found")
 	}
-	p.RateLimitCallCount = usage.CallCount
-	p.RateLimitTotalTime = usage.TotalTime
-	p.RateLimitTotalCPU = usage.TotalCPUTime
-	p.UpdatedAt = time.Now().UTC()
+	c.RateLimitCallCount = usage.CallCount
+	c.RateLimitTotalTime = usage.TotalTime
+	c.RateLimitTotalCPU = usage.TotalCPUTime
+	c.UpdatedAt = time.Now().UTC()
 	return nil
 }
 
@@ -632,9 +670,10 @@ func (m *InMemoryStore) CreatePost(ctx context.Context, post *domain.Post) (*dom
 	if post.MaxRetries <= 0 {
 		post.MaxRetries = 3
 	}
-	if p, ok := m.pages[post.PageUUID]; ok {
-		post.PageName = p.PageName
-		post.FBPageID = p.PageID
+	if ch, ok := m.channels[post.ChannelID]; ok {
+		post.ChannelName = ch.Name
+		post.Platform = ch.Platform
+		post.ExternalChannelID = ch.ExternalID
 	}
 	now := time.Now().UTC()
 	post.CreatedAt = now
@@ -653,9 +692,10 @@ func (m *InMemoryStore) GetPostByID(ctx context.Context, id string) (*domain.Pos
 		return nil, errors.New("post not found")
 	}
 	cp := *p
-	if page, exists := m.pages[cp.PageUUID]; exists {
-		cp.PageName = page.PageName
-		cp.FBPageID = page.PageID
+	if ch, exists := m.channels[cp.ChannelID]; exists {
+		cp.ChannelName = ch.Name
+		cp.Platform = ch.Platform
+		cp.ExternalChannelID = ch.ExternalID
 	}
 	return &cp, nil
 }
@@ -670,9 +710,10 @@ func (m *InMemoryStore) ListPosts(ctx context.Context, statusFilter string, limi
 			continue
 		}
 		cp := *p
-		if page, exists := m.pages[cp.PageUUID]; exists {
-			cp.PageName = page.PageName
-			cp.FBPageID = page.PageID
+		if ch, exists := m.channels[cp.ChannelID]; exists {
+			cp.ChannelName = ch.Name
+			cp.Platform = ch.Platform
+			cp.ExternalChannelID = ch.ExternalID
 		}
 		list = append(list, cp)
 	}
@@ -712,7 +753,7 @@ func (m *InMemoryStore) MarkPostProcessing(ctx context.Context, postID string) e
 	return nil
 }
 
-func (m *InMemoryStore) MarkPostPublished(ctx context.Context, postID string, fbPostID string, publishedAt time.Time) error {
+func (m *InMemoryStore) MarkPostPublished(ctx context.Context, postID string, externalPostID string, publishedAt time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -721,7 +762,7 @@ func (m *InMemoryStore) MarkPostPublished(ctx context.Context, postID string, fb
 		return errors.New("post not found")
 	}
 	p.Status = domain.PostStatusPublished
-	p.FBPostID = fbPostID
+	p.ExternalPostID = externalPostID
 	p.PublishedAt = &publishedAt
 	p.LastErrorCode = 0
 	p.LastErrorMessage = ""
@@ -752,10 +793,12 @@ func (m *InMemoryStore) CancelPost(ctx context.Context, postID string) error {
 
 	p, ok := m.posts[postID]
 	if !ok {
-		return errors.New("post not found")
+		return nil
 	}
-	p.Status = domain.PostStatusCancelled
-	p.UpdatedAt = time.Now().UTC()
+	if p.CanCancel() {
+		p.Status = domain.PostStatusCancelled
+		p.UpdatedAt = time.Now().UTC()
+	}
 	return nil
 }
 
@@ -796,11 +839,11 @@ func (m *InMemoryStore) GetSystemStats(ctx context.Context) (*domain.SystemStats
 	defer m.mu.RUnlock()
 
 	stats := &domain.SystemStats{
-		TotalPages: len(m.pages),
+		TotalChannels: len(m.channels),
 	}
-	for _, p := range m.pages {
-		if p.IsActive && p.TokenStatus == domain.TokenStatusActive {
-			stats.ActivePages++
+	for _, c := range m.channels {
+		if c.IsActive && c.TokenStatus == domain.TokenStatusActive {
+			stats.ActiveChannels++
 		}
 	}
 	for _, post := range m.posts {

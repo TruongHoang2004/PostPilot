@@ -7,32 +7,32 @@ import { PostComposer } from "@/components/PostComposer";
 import { PostList } from "@/components/PostList";
 import { PageManager } from "@/components/PageManager";
 import { api } from "@/lib/api";
-import { FacebookPage, Post, SystemHealth, SystemStats } from "@/lib/types";
+import { Channel, Post, SystemHealth, SystemStats } from "@/lib/types";
 import { useDialog } from "@/context/DialogContext";
-import { Flag, ArrowRight, ShieldCheck, Clock, Zap } from "lucide-react";
+import { Flag, ArrowRight, Clock } from "lucide-react";
 
 export default function Home() {
   const { alert, toast } = useDialog();
   const [activeTab, setActiveTab] = useState<"studio" | "pages" | "history">("studio");
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [stats, setStats] = useState<SystemStats | null>(null);
-  const [pages, setPages] = useState<FacebookPage[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
 
   const fetchAllData = useCallback(async () => {
     try {
-      const [healthData, statsData, pagesData, postsData] = await Promise.allSettled([
+      const [healthData, statsData, channelsData, postsData] = await Promise.allSettled([
         api.getHealth(),
         api.getStats(),
-        api.getPages(),
+        api.getChannels(),
         api.getPosts("ALL", 50),
       ]);
 
       if (healthData.status === "fulfilled") setHealth(healthData.value);
       if (statsData.status === "fulfilled") setStats(statsData.value);
-      if (pagesData.status === "fulfilled") setPages(pagesData.value);
+      if (channelsData.status === "fulfilled") setChannels(channelsData.value);
       if (postsData.status === "fulfilled") setPosts(postsData.value);
     } catch (err) {
       console.error("Lỗi khi tải dữ liệu:", err);
@@ -106,17 +106,17 @@ export default function Home() {
                   Hỗ trợ Text, Link, Single/Album Ảnh, Video & Reels
                 </span>
               </div>
-              <PostComposer pages={pages} onSuccess={fetchAllData} />
+              <PostComposer channels={channels} onSuccess={fetchAllData} />
             </div>
 
             {/* Right Column: Quick Status & Recent Queue (5 cols) */}
             <div className="lg:col-span-5 space-y-6">
-              {/* Connected Pages Widget */}
+              {/* Connected Channels Widget */}
               <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 backdrop-blur-sm p-5 shadow-sm dark:shadow-xl">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                     <Flag className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                    <span>Fanpage Đang Quản Trị ({pages.length})</span>
+                    <span>Kênh Phát Sóng Đang Quản Trị ({channels.length})</span>
                   </h3>
                   <button
                     onClick={() => setActiveTab("pages")}
@@ -126,34 +126,34 @@ export default function Home() {
                   </button>
                 </div>
 
-                {pages.length === 0 ? (
+                {channels.length === 0 ? (
                   <p className="text-xs text-slate-500 py-4 text-center">
-                    Chưa kết nối Fanpage nào. Nhấn Quản lý để kết nối.
+                    Chưa kết nối Kênh nào. Nhấn Quản lý để kết nối.
                   </p>
                 ) : (
                   <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                    {pages.slice(0, 4).map((p) => (
+                    {channels.slice(0, 4).map((c) => (
                       <div
-                        key={p.id}
+                        key={c.id}
                         className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800/80 text-xs"
                       >
                         <div className="flex items-center gap-2.5 truncate">
                           <span className="h-7 w-7 rounded-lg bg-blue-100 dark:bg-blue-600/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-500/30 flex items-center justify-center text-[10px] font-bold shrink-0">
-                            {p.page_name.charAt(0).toUpperCase()}
+                            {c.name.charAt(0).toUpperCase()}
                           </span>
                           <div className="truncate">
-                            <span className="font-semibold text-slate-800 dark:text-slate-200 block truncate">{p.page_name}</span>
-                            <span className="text-[10px] text-slate-500">{p.page_id}</span>
+                            <span className="font-semibold text-slate-800 dark:text-slate-200 block truncate">{c.name}</span>
+                            <span className="text-[10px] text-slate-500">{c.platform || "FACEBOOK"} • {c.external_id}</span>
                           </div>
                         </div>
                         <span
                           className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${
-                            p.token_status === "ACTIVE"
+                            c.token_status === "ACTIVE"
                               ? "bg-emerald-50 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/30"
                               : "bg-rose-50 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-500/30"
                           }`}
                         >
-                          {p.token_status}
+                          {c.token_status}
                         </span>
                       </div>
                     ))}
@@ -189,7 +189,7 @@ export default function Home() {
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-slate-800 dark:text-slate-300 truncate max-w-[150px]">
-                            {post.page_name || "Fanpage"}
+                            {post.channel_name || "Kênh phát sóng"}
                           </span>
                           <span
                             className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
@@ -213,9 +213,9 @@ export default function Home() {
           </div>
         )}
 
-        {/* Tab 2: Quản lý Fanpage */}
+        {/* Tab 2: Quản lý Kênh / Fanpage */}
         {activeTab === "pages" && (
-          <PageManager pages={pages} loading={loading} onRefresh={fetchAllData} />
+          <PageManager channels={channels} loading={loading} onRefresh={fetchAllData} />
         )}
 
         {/* Tab 3: Lịch trình & Hàng đợi */}
@@ -230,10 +230,10 @@ export default function Home() {
           <div className="flex items-center gap-2">
             <span className="font-semibold text-slate-700 dark:text-slate-400">PostPilot Suite</span>
             <span>•</span>
-            <span>Golang Backend • Next.js Frontend • Meta Graph API v20.0</span>
+            <span>DDD Hexagonal Architecture • Golang Backend • Next.js Frontend</span>
           </div>
           <div className="text-[11px] text-slate-400 dark:text-slate-600">
-            Mã hóa AES-256-GCM Vault • Redis Fast/Heavy Queue • Gemini AI Generator
+            Mã hóa AES-256-GCM Vault • Redis Fast/Heavy Queue • Multi-Channel Publishing
           </div>
         </div>
       </footer>

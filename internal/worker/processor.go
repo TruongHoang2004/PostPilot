@@ -18,13 +18,14 @@ import (
 )
 
 // Processor quản lý đội ngũ Worker tiêu thụ hàng đợi `FAST` và `HEAVY`,
-// thực thi đăng bài lên Facebook, kiểm soát Rate Limit và Exponential Backoff Retry.
+// thực thi xuất bản bài viết thông qua Output Port `domain.PublisherRegistry`,
+// kiểm soát Rate Limit và Exponential Backoff Retry độc lập nền tảng.
 type Processor struct {
 	cfg      *config.Config
 	store    database.Store
 	redis    *redis.Client
 	cipher   *crypto.TokenCipher
-	fbClient *facebook.Client
+	registry *domain.PublisherRegistry
 	notifier *notifier.TelegramNotifier
 	logger   *slog.Logger
 }
@@ -38,15 +39,27 @@ func NewProcessor(
 	notif *notifier.TelegramNotifier,
 	logger *slog.Logger,
 ) *Processor {
+	reg := domain.NewPublisherRegistry()
+	if fbClient != nil {
+		reg.Register(facebook.NewPublisherAdapter(fbClient))
+	}
 	return &Processor{
 		cfg:      cfg,
 		store:    store,
 		redis:    redisClient,
 		cipher:   cipher,
-		fbClient: fbClient,
+		registry: reg,
 		notifier: notif,
 		logger:   logger,
 	}
+}
+
+// WithPublisherRegistry cho phép tiêm (inject) bộ đăng ký Adapter đa nền tảng tùy chỉnh.
+func (p *Processor) WithPublisherRegistry(reg *domain.PublisherRegistry) *Processor {
+	if reg != nil {
+		p.registry = reg
+	}
+	return p
 }
 
 // Start khởi chạy các goroutine worker cho cả 2 hàng đợi FAST và HEAVY.
@@ -97,40 +110,46 @@ func (p *Processor) workerLoop(ctx context.Context, workerName string, tier stri
 	}
 }
 
-// ProcessPostByID thực hiện toàn bộ quy trình đăng 1 bài viết lên Facebook:
-// 1. Tải thông tin Post & Fanpage từ DB.
-// 2. Kiểm tra Rate-Limit hiện tại của Fanpage trên Redis. Nếu > ngưỡng an toàn (80%), tự động hoãn 5 phút.
-// 3. Giải mã Page Access Token bằng AES-256-GCM.
-// 4. Gọi Meta Graph API tương ứng với MediaType.
-// 5. Ghi nhận `publish_logs`, cập nhật Rate Limit và xử lý Retry (nếu lỗi tạm thời) hoặc bắn cảnh báo Telegram (nếu lỗi nghiêm trọng).
+// ProcessPostByID thực hiện toàn bộ quy trình đăng 1 bài viết lên Kênh đích (Channel):
+// 1. Tải thông tin Post & Channel từ DB.
+// 2. Kiểm tra Rate-Limit hiện tại của Channel trên Redis. Nếu > ngưỡng an toàn (80%), tự động hoãn 5 phút.
+// 3. Giải mã Access Token bằng AES-256-GCM.
+// 4. Lấy Adapter tương ứng với Platform từ `PublisherRegistry` và gọi `Publish`.
+// 5. Ghi nhận `publish_logs`, cập nhật Rate Limit và xử lý Retry hoặc bắn cảnh báo Telegram.
 func (p *Processor) ProcessPostByID(ctx context.Context, postID string) error {
 	post, err := p.store.GetPostByID(ctx, postID)
 	if err != nil {
 		return fmt.Errorf("load post %s: %w", postID, err)
 	}
 
-	if post.Status == domain.PostStatusPublished || post.Status == domain.PostStatusCancelled {
+	if post.IsTerminal() {
 		return nil
 	}
 
-	page, err := p.store.GetPageByUUID(ctx, post.PageUUID)
+	channel, err := p.store.GetChannelByID(ctx, post.ChannelID)
 	if err != nil {
-		return fmt.Errorf("load page %s: %w", post.PageUUID, err)
+		return fmt.Errorf("load channel %s: %w", post.ChannelID, err)
 	}
 
-	if !page.IsActive || page.TokenStatus == domain.TokenStatusExpired || page.TokenStatus == domain.TokenStatusRevoked {
-		errMsg := fmt.Sprintf("page %s (%s) is inactive or token status is %s", page.PageName, page.PageID, page.TokenStatus)
+	if !channel.IsUsable() {
+		errMsg := fmt.Sprintf("channel %s (%s) is inactive or token status is %s", channel.Name, channel.ExternalID, channel.TokenStatus)
 		_ = p.store.MarkPostFailedOrRetry(ctx, post.ID, post.RetryCount, nil, domain.PostStatusFailed, 190, errMsg)
 		return errors.New(errMsg)
 	}
 
-	// Kiểm tra Rate-Limit từ Redis trước khi gọi Meta API
-	cachedUsage, _ := p.redis.GetPageRateLimit(ctx, page.PageID)
+	// Kiểm tra Rate-Limit từ Redis trước khi gọi Adapter
+	cachedUsage, _ := p.redis.GetChannelRateLimit(ctx, channel.ExternalID)
 	if cachedUsage.MaxPercent() >= p.cfg.RateLimitThresholdPercent {
 		delayUntil := time.Now().UTC().Add(5 * time.Minute)
-		msg := fmt.Sprintf("Throttled: Page rate-limit usage is %d%% (threshold %d%%), delayed 5m", cachedUsage.MaxPercent(), p.cfg.RateLimitThresholdPercent)
+		msg := fmt.Sprintf("Throttled: Channel rate-limit usage is %d%% (threshold %d%%), delayed 5m", cachedUsage.MaxPercent(), p.cfg.RateLimitThresholdPercent)
 		_ = p.store.MarkPostFailedOrRetry(ctx, post.ID, post.RetryCount, &delayUntil, domain.PostStatusFailed, 32, msg)
 		return errors.New(msg)
+	}
+
+	publisher, err := p.registry.Get(channel.Platform)
+	if err != nil {
+		_ = p.store.MarkPostFailedOrRetry(ctx, post.ID, post.RetryCount, nil, domain.PostStatusFailed, 0, err.Error())
+		return err
 	}
 
 	if err := p.store.MarkPostProcessing(ctx, post.ID); err != nil {
@@ -138,76 +157,85 @@ func (p *Processor) ProcessPostByID(ctx context.Context, postID string) error {
 	}
 
 	// Giải mã Access Token trong RAM
-	accessToken, err := p.cipher.Decrypt(page.EncryptedAccessToken)
+	accessToken, err := p.cipher.Decrypt(channel.EncryptedAccessToken)
 	if err != nil {
 		_ = p.store.MarkPostFailedOrRetry(ctx, post.ID, post.RetryCount, nil, domain.PostStatusFailed, 0, "token decryption error: "+err.Error())
 		return err
 	}
 
 	attemptNumber := post.RetryCount + 1
-	outcome, pubErr := p.fbClient.PublishPost(ctx, page.PageID, accessToken, post)
+	outcome, pubErr := publisher.Publish(ctx, domain.PublishRequest{
+		Channel:     *channel,
+		AccessToken: accessToken,
+		Post:        post,
+	})
 
 	// Lưu toàn bộ các bước gọi API vào bảng publish_logs
 	if outcome != nil {
 		for _, step := range outcome.Steps {
 			logEntry := &domain.PublishLog{
 				PostID:         post.ID,
-				PageUUID:       page.ID,
+				ChannelID:      channel.ID,
 				AttemptNumber:  attemptNumber,
 				Action:         step.Action,
-				HTTPStatus:     step.Metrics.HTTPStatus,
+				HTTPStatus:     step.HTTPStatus,
 				RequestSummary: step.RequestSummary,
-				ResponseBody:   step.Metrics.RawResponse,
-				DurationMs:     step.Metrics.DurationMs,
+				ResponseBody:   step.RawResponse,
+				DurationMs:     step.DurationMs,
 			}
-			var fbErr *facebook.GraphAPIError
-			if errors.As(step.Error, &fbErr) {
-				logEntry.FBErrorCode = fbErr.Code
-				logEntry.FBErrorSubcode = fbErr.ErrorSubcode
+			var platErr domain.PublisherError
+			if errors.As(step.Error, &platErr) {
+				logEntry.ErrorCode = platErr.ErrorCode()
+				logEntry.ErrorSubcode = platErr.Subcode()
 			}
 			_ = p.store.InsertPublishLog(ctx, logEntry)
 		}
 
-		// Cập nhật thông số Rate Limit mới nhất từ Header của Meta
+		// Cập nhật thông số Rate Limit mới nhất từ Adapter
 		if outcome.FinalRateLimit.MaxPercent() > 0 {
-			_ = p.redis.SavePageRateLimit(ctx, page.PageID, outcome.FinalRateLimit)
-			_ = p.store.UpdatePageRateLimit(ctx, page.ID, outcome.FinalRateLimit)
+			_ = p.redis.SaveChannelRateLimit(ctx, channel.ExternalID, outcome.FinalRateLimit)
+			_ = p.store.UpdateChannelRateLimit(ctx, channel.ID, outcome.FinalRateLimit)
 		}
 	}
 
 	if pubErr == nil && outcome != nil {
 		now := time.Now().UTC()
-		if err := p.store.MarkPostPublished(ctx, post.ID, outcome.FBPostID, now); err != nil {
+		if err := p.store.MarkPostPublished(ctx, post.ID, outcome.ExternalPostID, now); err != nil {
 			return err
 		}
-		p.logger.Info("Successfully published post to Facebook",
+		p.logger.Info("Successfully published post to channel",
+			"platform", channel.Platform,
 			"post_id", post.ID,
-			"page_id", page.PageID,
-			"fb_post_id", outcome.FBPostID,
+			"channel_id", channel.ExternalID,
+			"external_post_id", outcome.ExternalPostID,
 		)
 		return nil
 	}
 
 	// Xử lý phân loại lỗi & tính toán Exponential Backoff Retry
-	return p.handlePublishFailure(ctx, post, page, attemptNumber, pubErr)
+	return p.handlePublishFailure(ctx, post, *channel, attemptNumber, pubErr)
 }
 
-func (p *Processor) handlePublishFailure(ctx context.Context, post *domain.Post, page *domain.FacebookPage, attempt int, pubErr error) error {
-	var fbErr *facebook.GraphAPIError
+func (p *Processor) handlePublishFailure(ctx context.Context, post *domain.Post, channel domain.Channel, attempt int, pubErr error) error {
+	if pubErr == nil {
+		pubErr = errors.New("publisher returned empty result without error")
+	}
+
+	var platErr domain.PublisherError
 	errCode := 0
-	isRetryable := true
+	isRetryable := false
 
-	if errors.As(pubErr, &fbErr) {
-		errCode = fbErr.Code
-		isRetryable = fbErr.IsRetryable()
+	if errors.As(pubErr, &platErr) {
+		errCode = platErr.ErrorCode()
+		isRetryable = platErr.IsRetryable()
 
-		if fbErr.IsTokenInvalid() {
+		if platErr.IsTokenInvalid() {
 			now := time.Now().UTC()
-			_ = p.store.UpdatePageTokenStatus(ctx, page.ID, domain.TokenStatusExpired, now)
+			_ = p.store.UpdateChannelTokenStatus(ctx, channel.ID, domain.TokenStatusExpired, now)
 			_ = p.notifier.SendAlert(
 				ctx,
-				"Token Fanpage Hết Hạn Khi Đang Đăng Bài (Code 190)",
-				fmt.Sprintf("Fanpage: *%s* (`%s`)\nBài viết ID: `%s`\nChi tiết: %s", page.PageName, page.PageID, post.ID, fbErr.Message),
+				"Token Kênh Xuất Bản Hết Hạn Khi Đang Đăng Bài",
+				fmt.Sprintf("Kênh: *%s* (`%s` - `%s`)\nBài viết ID: `%s`\nChi tiết: %s", channel.Name, channel.ExternalID, channel.Platform, post.ID, platErr.Error()),
 			)
 		}
 	}
@@ -231,8 +259,8 @@ func (p *Processor) handlePublishFailure(ctx context.Context, post *domain.Post,
 	_ = p.notifier.SendAlert(
 		ctx,
 		"Đăng Bài Tự Động Thất Bại Vĩnh Viễn",
-		fmt.Sprintf("Fanpage: *%s* (`%s`)\nBài viết ID: `%s`\nSố lần thử: `%d/%d`\nLỗi: `%s`",
-			page.PageName, page.PageID, post.ID, attempt, post.MaxRetries, pubErr.Error()),
+		fmt.Sprintf("Kênh: *%s* (`%s`)\nBài viết ID: `%s`\nSố lần thử: `%d/%d`\nLỗi: `%s`",
+			channel.Name, channel.ExternalID, post.ID, attempt, post.MaxRetries, pubErr.Error()),
 	)
 	return pubErr
 }
