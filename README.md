@@ -65,12 +65,13 @@ PostPilot/
     │   ├── storage/s3_minio.go        # Ký AWS Signature V4 Presigned PUT URL cho S3 / MinIO / Cloudflare R2
     │   ├── notifier/telegram.go       # Gửi cảnh báo thời gian thực qua Telegram Bot
     │   └── ai/gemini.go               # Tích hợp Google Gemini API tự động viết nội dung bài đăng
-    ├── facebook/                      # Secondary Adapter thực thi domain.PublisherPort cho nền tảng Facebook
-    │   ├── adapter.go                 # PublisherAdapter cầu nối giữa Core Domain và Meta Graph API
-    │   ├── client.go                  # HTTP Client gọi Meta Graph API v20.0 & đọc Header X-Page-Usage
-    │   ├── auth.go                    # Luồng OAuth2 & đổi Short-lived -> Long-lived -> Permanent Page Token
-    │   ├── publisher.go               # Engine đăng bài: Text, Link, Single Photo, Multi-Photo Album, Chunked Video, Reels
-    │   └── errors.go                  # Phân loại mã lỗi Meta thực thi domain.PublisherError
+    ├── platform/                      # Secondary Platform Adapters thực thi domain.PublisherPort
+    │   └── facebook/                  # Facebook Platform Adapter
+    │       ├── adapter.go             # PublisherAdapter cầu nối giữa Core Domain và Meta Graph API
+    │       ├── client.go              # HTTP Client gọi Meta Graph API v20.0 & đọc Header X-Page-Usage
+    │       ├── auth.go                # Luồng OAuth2 & đổi Short-lived -> Long-lived -> Permanent Page Token
+    │       ├── publisher.go           # Engine đăng bài: Text, Link, Single Photo, Multi-Photo Album, Chunked Video, Reels
+    │       └── errors.go              # Phân loại mã lỗi Meta thực thi domain.PublisherError
     ├── worker/
     │   ├── scheduler.go               # Quét bài đến hạn đăng & kiểm tra sức khỏe Token qua PublisherRegistry
     │   └── processor.go               # Xử lý hàng đợi FAST/HEAVY qua PublisherPort, điều tiết Rate-Limit & Backoff
