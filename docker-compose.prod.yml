@@ -3,7 +3,7 @@ services:
   # 1. Database Migrator (Chạy từ GHCR image trước khi API/Worker boot)
   # --------------------------------------------------------------------------
   migrate:
-    image: ${BACKEND_IMAGE:-ghcr.io/truonghoang2004/postpilot-backend:latest}
+    image: ${BACKEND_IMAGE:-ghcr.io/truonghoang2004/postpilot-backend:sha-e7aa638}
     container_name: fbposter-migrate
     command: ["/app/fb-migrate", "up"]
     environment:
@@ -15,7 +15,7 @@ services:
   # 2. Backend API Server (Chạy từ GHCR image)
   # --------------------------------------------------------------------------
   api:
-    image: ${BACKEND_IMAGE:-ghcr.io/truonghoang2004/postpilot-backend:latest}
+    image: ${BACKEND_IMAGE:-ghcr.io/truonghoang2004/postpilot-backend:sha-e7aa638}
     container_name: fbposter-api
     restart: unless-stopped
     command: ["/app/fb-api"]
@@ -54,7 +54,7 @@ services:
   # 3. Background Worker & Scheduler (Chạy từ GHCR image)
   # --------------------------------------------------------------------------
   worker:
-    image: ${BACKEND_IMAGE:-ghcr.io/truonghoang2004/postpilot-backend:latest}
+    image: ${BACKEND_IMAGE:-ghcr.io/truonghoang2004/postpilot-backend:sha-e7aa638}
     container_name: fbposter-worker
     restart: unless-stopped
     command: ["/app/fb-worker"]
@@ -91,7 +91,7 @@ services:
   # 4. Next.js Studio Frontend (Chạy từ GHCR image)
   # --------------------------------------------------------------------------
   frontend:
-    image: ${FRONTEND_IMAGE:-ghcr.io/truonghoang2004/postpilot-frontend:latest}
+    image: ${FRONTEND_IMAGE:-ghcr.io/truonghoang2004/postpilot-frontend:sha-e7aa638}
     container_name: fbposter-frontend
     restart: unless-stopped
     environment:
