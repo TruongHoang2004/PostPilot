@@ -27,7 +27,10 @@ func (s *Server) handleFBOAuthLogin(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	loginURL := s.fbClient.BuildOAuthLoginURL(s.cfg.FBAppID, s.cfg.FBRedirectURI, "fbposter_state")
+
+	tc := domain.TenantFromContext(r.Context())
+	state := crypto.SignOAuthState(tc.OrganizationID, tc.UserID, s.cfg.APIAdminKey)
+	loginURL := s.fbClient.BuildOAuthLoginURL(s.cfg.FBAppID, s.cfg.FBRedirectURI, state)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"oauth_login_url": loginURL,
 	})
@@ -37,6 +40,7 @@ func (s *Server) handleFBOAuthLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleFBOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
 	fbErr := r.URL.Query().Get("error")
 	fbErrDesc := r.URL.Query().Get("error_description")
 
@@ -59,6 +63,16 @@ func (s *Server) handleFBOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if state == "" {
+		http.Redirect(w, r, targetHost+"/?oauth=error&message="+url.QueryEscape("missing oauth state parameter"), http.StatusTemporaryRedirect)
+		return
+	}
+	orgID, _, err := crypto.VerifyOAuthState(state, s.cfg.APIAdminKey)
+	if err != nil {
+		http.Redirect(w, r, targetHost+"/?oauth=error&message="+url.QueryEscape("invalid or expired oauth state: "+err.Error()), http.StatusTemporaryRedirect)
+		return
+	}
+
 	shortUserToken, err := s.fbClient.ExchangeCodeForUserToken(
 		ctx, s.cfg.FBAppID, s.cfg.FBAppSecret, s.cfg.FBRedirectURI, code,
 	)
@@ -67,7 +81,7 @@ func (s *Server) handleFBOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	savedChannels, err := s.exchangeAndSaveFacebookChannels(ctx, shortUserToken)
+	savedChannels, err := s.exchangeAndSaveFacebookChannels(ctx, shortUserToken, orgID)
 	if err != nil {
 		http.Redirect(w, r, targetHost+"/?oauth=error&message="+url.QueryEscape(err.Error()), http.StatusTemporaryRedirect)
 		return
@@ -87,7 +101,13 @@ func (s *Server) handleFBExchangeUserToken(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	savedChannels, err := s.exchangeAndSaveFacebookChannels(r.Context(), strings.TrimSpace(body.ShortLivedUserToken))
+	tc := domain.TenantFromContext(r.Context())
+	if !tc.IsOrgAdminOrOwner() {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "only organization owners and admins can connect channels"})
+		return
+	}
+
+	savedChannels, err := s.exchangeAndSaveFacebookChannels(r.Context(), strings.TrimSpace(body.ShortLivedUserToken), tc.OrganizationID)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
@@ -100,9 +120,12 @@ func (s *Server) handleFBExchangeUserToken(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func (s *Server) exchangeAndSaveFacebookChannels(ctx context.Context, shortUserToken string) ([]*domain.Channel, error) {
+func (s *Server) exchangeAndSaveFacebookChannels(ctx context.Context, shortUserToken, orgID string) ([]*domain.Channel, error) {
 	if s.fbClient == nil {
 		return nil, errors.New("facebook client is not configured")
+	}
+	if orgID == "" {
+		orgID = domain.DefaultOrganizationID
 	}
 	longUserToken := shortUserToken
 
@@ -126,6 +149,7 @@ func (s *Server) exchangeAndSaveFacebookChannels(ctx context.Context, shortUserT
 			continue
 		}
 		saved, err := s.store.UpsertChannel(ctx, &domain.Channel{
+			OrganizationID:       orgID,
 			Platform:             domain.PlatformFacebook,
 			ExternalID:           mp.PageID,
 			Name:                 mp.PageName,
@@ -163,4 +187,3 @@ func (s *Server) handleFBWebhookEvent(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("Received Meta Webhook event", "object", payload["object"])
 	writeJSON(w, http.StatusOK, map[string]any{"received": true})
 }
-

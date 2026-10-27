@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" width="1024" height="1024">
+  <defs>
+    <!-- Main Dynamic Gradient: Cyan -> Electric Blue -> Violet -->
+    <linearGradient id="ppPrimaryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="45%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+
+    <!-- Accent Wing Gradient -->
+    <linearGradient id="ppAccentGrad" x1="20%" y1="0%" x2="90%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+
+    <!-- Top Aerodynamic Highlight -->
+    <linearGradient id="ppLightGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#93c5fd" stop-opacity="0.2"/>
+    </linearGradient>
+
+    <!-- Trail & Pulse Glow -->
+    <linearGradient id="ppTrailGrad" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0"/>
+      <stop offset="60%" stop-color="#60a5fa" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#a855f7" stop-opacity="0.9"/>
+    </linearGradient>
+
+    <!-- Shadow filter for depth -->
+    <filter id="ppGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="16" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <filter id="ppSubtleShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0284c7" flood-opacity="0.45"/>
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#4f46e5" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Background Orbit / Pilot Ring Indicator -->
+  <circle cx="256" cy="256" r="185" stroke="url(#ppTrailGrad)" stroke-width="4" stroke-dasharray="14 18" opacity="0.6" transform="rotate(-25 256 256)"/>
+
+  <!-- Logo Mark Group -->
+  <g filter="url(#ppSubtleShadow)" transform="translate(15, -5)">
+    <!-- Rear Fin / Trailing Speed Wave -->
+    <path d="M 140 330 C 180 320 220 295 240 270 L 190 275 Z" fill="#6366f1" opacity="0.65"/>
+
+    <!-- Left Wing (The Social Send / Paper Plane sweep) -->
+    <path d="M 155 350 L 255 130 L 245 285 Z" fill="url(#ppAccentGrad)" opacity="0.98"/>
+
+    <!-- Central Fuselage / Jet Stream Peak (Pilot guidance) -->
+    <path d="M 255 130 L 375 255 L 275 295 L 245 285 Z" fill="url(#ppPrimaryGrad)"/>
+
+    <!-- Lower Fold / Shadow Keel -->
+    <path d="M 245 285 L 275 295 L 235 375 Z" fill="#4338ca"/>
+
+    <!-- Aerodynamic Speed Edge / Highlighting Glint -->
+    <path d="M 255 130 L 155 350 L 245 285 Z" stroke="url(#ppLightGrad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+    <path d="M 255 130 L 375 255" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round" opacity="0.95"/>
+
+    <!-- Futuristic AI Beacon Sparkle / Node at Cockpit Apex -->
+    <circle cx="255" cy="130" r="8" fill="#ffffff" filter="url(#ppGlow)"/>
+    <circle cx="255" cy="130" r="4" fill="#38bdf8"/>
+
+    <!-- Signal Pulse Waves (Automated Broadcast / Posting) -->
+    <path d="M 320 185 C 345 195 365 215 375 240" stroke="#38bdf8" stroke-width="5" stroke-linecap="round" stroke-dasharray="1 1" opacity="0.9"/>
+    <path d="M 345 165 C 380 180 405 210 415 245" stroke="#818cf8" stroke-width="3.5" stroke-linecap="round" opacity="0.65"/>
+  </g>
+</svg>

@@ -13,7 +13,7 @@ Tài liệu này hướng dẫn cách vận hành, giám sát, xử lý sự c�
    Cập nhật giá trị này vào biến môi trường của cả `api` và `worker`. *(Lưu ý: Không làm mất khóa này vì toàn bộ Access Token trong bảng `channels` được mã hóa bằng nó).*
 2. **Lưu trữ Media công khai (Public S3 / CDN):**
    * Khi chạy trên Cloud, nền tảng mạng xã hội (như Meta Graph API) cần tải được file ảnh/video từ các đường dẫn trong `media_urls`.
-   * Do đó, hãy trỏ `S3_ENDPOINT` và `S3_PUBLIC_BASE_URL` tới **AWS S3**, **Cloudflare R2**, hoặc **MinIO có gắn tên miền HTTPS công khai** (ví dụ: `https://api-postpilot.yourdomain.com/fb-media`).
+   * Do đó, hãy trỏ `S3_ENDPOINT` và `S3_PUBLIC_BASE_URL` tới **AWS S3**, **Cloudflare R2**, hoặc **MinIO có gắn tên miền HTTPS công khai** (ví dụ: `https://api-postpilot.hexta.org/fb-media`).
 3. **Bật Cảnh báo Telegram (`TELEGRAM_BOT_TOKEN` & `TELEGRAM_CHAT_ID`):**
    * Nhắn tin cho `@BotFather` trên Telegram để tạo Bot và lấy `TELEGRAM_BOT_TOKEN`.
    * Thêm Bot vào nhóm vận hành và điền `TELEGRAM_CHAT_ID` vào `.env`.

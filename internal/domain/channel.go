@@ -61,6 +61,7 @@ func (r RateLimitUsage) MaxPercent() int {
 // agnostic of the underlying platform (Facebook Page, LinkedIn Org, X Account, TikTok Profile, etc.).
 type Channel struct {
 	ID                   string       `json:"id"`
+	OrganizationID       string       `json:"organization_id"`
 	Platform             PlatformType `json:"platform"`
 	ExternalID           string       `json:"external_id"`
 	Name                 string       `json:"name"`
@@ -73,6 +74,8 @@ type Channel struct {
 	RateLimitCallCount   int          `json:"rate_limit_call_count"`
 	RateLimitTotalTime   int          `json:"rate_limit_total_time"`
 	RateLimitTotalCPU    int          `json:"rate_limit_total_cputime"`
+	GroupIDs             []string     `json:"group_ids,omitempty"`
+	GroupNames           []string     `json:"group_names,omitempty"`
 	IsActive             bool         `json:"is_active"`
 	CreatedAt            time.Time    `json:"created_at"`
 	UpdatedAt            time.Time    `json:"updated_at"`

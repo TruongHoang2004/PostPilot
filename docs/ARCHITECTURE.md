@@ -168,9 +168,9 @@ flowchart LR
     GHCR_BE -.->|"docker compose pull"| Worker_Container
     GHCR_BE -.->|"docker compose pull"| Migrate_Container
 
-    Browser -->|"postpilot.nhavuonngoclam.com"| Nginx
-    Browser -->|"api-postpilot.nhavuonngoclam.com"| Nginx
-    FBCrawler -->|"api-postpilot.nhavuonngoclam.com/fb-media/*"| Nginx
+    Browser -->|"postpilot.hexta.org"| Nginx
+    Browser -->|"api-postpilot.hexta.org"| Nginx
+    FBCrawler -->|"api-postpilot.hexta.org/fb-media/*"| Nginx
 
     Nginx -->|"Proxy pass :3000"| FE_Container
     Nginx -->|"Proxy pass :8080 (/api/v1/*, /healthz)"| API_Container

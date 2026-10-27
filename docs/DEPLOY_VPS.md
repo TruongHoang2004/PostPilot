@@ -12,8 +12,8 @@ Tài liệu này hướng dẫn chi tiết từng bước triển khai và mở 
 - **CPU / RAM**: Tối thiểu 2 Cores, 4 GB RAM (+ 2 GB Swap), 30+ GB SSD
 - **Tường lửa (UFW)**: Chỉ mở Port `22/SSH`, `80/HTTP`, `443/HTTPS`
 - **Tên miền (2 Subdomain độc lập)**:
-  - `postpilot.yourdomain.com` -> Trỏ vào **Next.js Studio UI** (`fbposter-frontend:3000`)
-  - `api-postpilot.yourdomain.com` -> Trỏ vào **Go REST API** (`fbposter-api:8080`) và đường dẫn `/fb-media/` phục vụ file trực tiếp từ **MinIO S3** (`shared-minio:9000/fb-media/`).
+  - `postpilot.hexta.org` -> Trỏ vào **Next.js Studio UI** (`fbposter-frontend:3000`)
+  - `api-postpilot.hexta.org` -> Trỏ vào **Go REST API** (`fbposter-api:8080`) và đường dẫn `/fb-media/` phục vụ file trực tiếp từ **MinIO S3** (`shared-minio:9000/fb-media/`).
 
 ---
 
@@ -51,10 +51,10 @@ docker compose up -d
    - `DATABASE_URL=postgres://fbposter:<PASS>@postgres:5432/fb_autoposter?sslmode=disable`
    - `REDIS_ADDR=redis:6379`
    - `S3_ENDPOINT=http://minio:9000`
-   - `S3_PUBLIC_BASE_URL=https://api-postpilot.yourdomain.com/fb-media`
-   - `FRONTEND_URL=https://postpilot.yourdomain.com`
-   - `NEXT_PUBLIC_API_URL=https://api-postpilot.yourdomain.com`
-   - `FB_REDIRECT_URI=https://api-postpilot.yourdomain.com/api/v1/auth/facebook/callback`
+   - `S3_PUBLIC_BASE_URL=https://api-postpilot.hexta.org/fb-media`
+   - `FRONTEND_URL=https://postpilot.hexta.org`
+   - `NEXT_PUBLIC_API_URL=https://api-postpilot.hexta.org`
+   - `FB_REDIRECT_URI=https://api-postpilot.hexta.org/api/v1/auth/facebook/callback`
 3. Khởi chạy ứng dụng (tự động chạy migration `000001` -> `000003` qua container `fbposter-migrate`):
    ```bash
    cd /opt/postpilot
@@ -66,7 +66,7 @@ docker compose up -d
 
 ## 4. Cấp Chứng Chỉ SSL Let's Encrypt & Kích Hoạt HTTPS
 
-Sau khi đã trỏ A Record cho cả 2 tên miền (`postpilot.yourdomain.com` và `api-postpilot.yourdomain.com`) về IP của VPS:
+Sau khi đã trỏ A Record cho cả 2 tên miền (`postpilot.hexta.org` và `api-postpilot.hexta.org`) về IP của VPS:
 
 ```bash
 cd /opt/infra

@@ -11,11 +11,11 @@ import (
 	"github.com/TruongHoang2004/PostPilot/internal/crypto"
 	"github.com/TruongHoang2004/PostPilot/internal/database"
 	"github.com/TruongHoang2004/PostPilot/internal/domain"
-	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/ai"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/storage"
+	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 	"github.com/TruongHoang2004/PostPilot/internal/worker"
 )
 
@@ -83,36 +83,59 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealthCheck)
 	mux.HandleFunc("GET /api/v1/stats", s.handleGetStats)
 
-	// 2. Post & Publishing Core Domain Module (publishing_handler.go)
+	// 2. Multi-Tenant Identity & RBAC Module (org_handler.go)
+	mux.HandleFunc("POST /api/v1/auth/register", s.handleAuthRegister)
+	mux.HandleFunc("POST /api/v1/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("GET /api/v1/auth/me", s.handleAuthMe)
+	mux.HandleFunc("GET /api/v1/organizations", s.handleListOrganizations)
+	mux.HandleFunc("POST /api/v1/organizations", s.handleCreateOrganization)
+	mux.HandleFunc("GET /api/v1/organizations/{id}/members", s.handleListOrganizationMembers)
+	mux.HandleFunc("POST /api/v1/organizations/{id}/members", s.handleAddOrganizationMember)
+	mux.HandleFunc("DELETE /api/v1/organizations/{id}/members/{memberId}", s.handleRemoveOrganizationMember)
+	mux.HandleFunc("POST /api/v1/invitations/accept", s.handleAcceptInvitation)
+	mux.HandleFunc("GET /api/v1/audit-logs", s.handleListAuditLogs)
+
+	// 3. Channel Groups & RBAC Module (channel_group_handler.go)
+	mux.HandleFunc("GET /api/v1/channel-groups", s.handleListChannelGroups)
+	mux.HandleFunc("POST /api/v1/channel-groups", s.handleCreateChannelGroup)
+	mux.HandleFunc("DELETE /api/v1/channel-groups/{id}", s.handleDeleteChannelGroup)
+	mux.HandleFunc("PUT /api/v1/channel-groups/{id}/channels", s.handleSetChannelGroupChannels)
+	mux.HandleFunc("GET /api/v1/channel-groups/{id}/permissions", s.handleListChannelGroupPermissions)
+	mux.HandleFunc("POST /api/v1/channel-groups/{id}/permissions", s.handleSetChannelGroupPermission)
+	mux.HandleFunc("DELETE /api/v1/channel-groups/{id}/permissions/{memberId}", s.handleDeleteChannelGroupPermission)
+
+	// 4. Post & Publishing Core Domain Module (publishing_handler.go)
 	mux.HandleFunc("GET /api/v1/posts", s.handleListPosts)
 	mux.HandleFunc("POST /api/v1/posts", s.handleCreatePost)
 	mux.HandleFunc("GET /api/v1/posts/{id}", s.handleGetPostDetail)
 	mux.HandleFunc("POST /api/v1/posts/{id}/publish-now", s.handlePublishPostNow)
 	mux.HandleFunc("POST /api/v1/posts/{id}/cancel", s.handleCancelPost)
+	mux.HandleFunc("POST /api/v1/posts/{id}/submit-approval", s.handlePostSubmitApproval)
+	mux.HandleFunc("POST /api/v1/posts/{id}/review", s.handleReviewPost)
 
-	// 3. Channel (Publishing Target) Module (channel_handler.go)
+	// 5. Channel (Publishing Target) Module (channel_handler.go)
 	mux.HandleFunc("GET /api/v1/channels", s.handleListChannels)
 	mux.HandleFunc("POST /api/v1/channels", s.handleUpsertChannel)
 	mux.HandleFunc("DELETE /api/v1/channels/{id}", s.handleDeleteChannel)
 	mux.HandleFunc("POST /api/v1/channels/{id}/verify-token", s.handleVerifyChannelToken)
 
-	// 4. Media Management Module (media_handler.go)
+	// 6. Media Management Module (media_handler.go)
 	_ = os.MkdirAll("./uploads", 0755)
 	mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
 	mux.HandleFunc("POST /api/v1/media/upload", s.handleMediaUpload)
 	mux.HandleFunc("POST /api/v1/media/presign", s.handlePresignUpload)
 
-	// 5. AI Content Generation Module (ai_handler.go)
+	// 7. AI Content Generation Module (ai_handler.go)
 	mux.HandleFunc("POST /api/v1/ai/generate", s.handleAIGenerateContent)
 
-	// 6. Facebook Platform Adapter Module: OAuth2 & Webhooks (facebook_handler.go)
+	// 8. Facebook Platform Adapter Module: OAuth2 & Webhooks (facebook_handler.go)
 	mux.HandleFunc("GET /api/v1/auth/facebook/login", s.handleFBOAuthLogin)
 	mux.HandleFunc("GET /api/v1/auth/facebook/callback", s.handleFBOAuthCallback)
 	mux.HandleFunc("POST /api/v1/auth/facebook/exchange-token", s.handleFBExchangeUserToken)
 	mux.HandleFunc("GET /api/v1/webhooks/facebook", s.handleFBWebhookVerify)
 	mux.HandleFunc("POST /api/v1/webhooks/facebook", s.handleFBWebhookEvent)
 
-	return s.withMiddlewares(mux)
+	return s.withMiddlewares(s.tenantMiddleware(mux))
 }
 
 func (s *Server) withMiddlewares(next http.Handler) http.Handler {
@@ -120,7 +143,7 @@ func (s *Server) withMiddlewares(next http.Handler) http.Handler {
 		start := time.Now()
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Key")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Key, X-Organization-Id, X-Simulate-Role, X-User-Id")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

@@ -37,6 +37,12 @@ func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
 
 // handleUpsertChannel creates or updates a publishing Channel.
 func (s *Server) handleUpsertChannel(w http.ResponseWriter, r *http.Request) {
+	tc := domain.TenantFromContext(r.Context())
+	if !tc.IsOrgAdminOrOwner() {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "only organization owners and admins can configure channels"})
+		return
+	}
+
 	var req struct {
 		Platform    string `json:"platform"`
 		ExternalID  string `json:"external_id"`
@@ -161,6 +167,15 @@ func (s *Server) handleVerifyChannelToken(w http.ResponseWriter, r *http.Request
 func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	channelID := r.PathValue("id")
+
+	tc := domain.TenantFromContext(ctx)
+	if !tc.IsOrgAdminOrOwner() {
+		role, hasExplicit := s.resolveChannelPermission(ctx, channelID)
+		if !hasExplicit || !tc.CanManageChannel(role) {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "insufficient permissions to delete channel"})
+			return
+		}
+	}
 
 	channel, err := s.store.GetChannelByID(ctx, channelID)
 	if err != nil {

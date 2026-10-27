@@ -1,19 +1,24 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { Header } from "@/components/Header";
+import Link from "next/link";
+import { Header, NavigationTab } from "@/components/Header";
 import { StatsCards } from "@/components/StatsCards";
 import { PostComposer } from "@/components/PostComposer";
 import { PostList } from "@/components/PostList";
 import { PageManager } from "@/components/PageManager";
+import { ApprovalInbox } from "@/components/ApprovalInbox";
+import { TeamAndGroupsManager } from "@/components/TeamAndGroupsManager";
 import { api } from "@/lib/api";
 import { Channel, Post, SystemHealth, SystemStats } from "@/lib/types";
 import { useDialog } from "@/context/DialogContext";
-import { Flag, ArrowRight, Clock } from "lucide-react";
+import { useOrg } from "@/context/OrgContext";
+import { Flag, ArrowRight, Clock, ShieldCheck } from "lucide-react";
 
 export default function Home() {
   const { alert, toast } = useDialog();
-  const [activeTab, setActiveTab] = useState<"studio" | "pages" | "history">("studio");
+  const { currentOrg } = useOrg();
+  const [activeTab, setActiveTab] = useState<NavigationTab>("studio");
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [stats, setStats] = useState<SystemStats | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -41,9 +46,10 @@ export default function Home() {
     }
   }, []);
 
+  // Fetch when workspace/org changes
   useEffect(() => {
     fetchAllData();
-  }, [fetchAllData]);
+  }, [fetchAllData, currentOrg]);
 
   // Handle OAuth callback URL status
   useEffect(() => {
@@ -80,6 +86,7 @@ export default function Home() {
       {/* Header bar */}
       <Header
         health={health}
+        pendingApprovalsCount={stats?.pending_approval_posts || 0}
         loading={loading}
         autoRefresh={autoRefresh}
         onToggleAutoRefresh={() => setAutoRefresh(!autoRefresh)}
@@ -103,7 +110,7 @@ export default function Home() {
                   <span>✨ Soạn Thảo Bài Đăng Mới</span>
                 </h2>
                 <span className="text-xs text-slate-500 dark:text-slate-400">
-                  Hỗ trợ Text, Link, Single/Album Ảnh, Video & Reels
+                  Hỗ trợ Kênh Đơn lẻ & Cụm Kênh (Batch Fan-out)
                 </span>
               </div>
               <PostComposer channels={channels} onSuccess={fetchAllData} />
@@ -161,6 +168,31 @@ export default function Home() {
                 )}
               </div>
 
+              {/* Pending Approvals Quick Banner if any */}
+              {(stats?.pending_approval_posts ?? 0) > 0 && (
+                <div className="rounded-2xl border border-amber-300 dark:border-amber-500/30 bg-amber-50/70 dark:bg-amber-950/30 p-4 shadow-sm flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <span className="p-2 rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                      <ShieldCheck className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <p className="text-xs font-bold text-amber-900 dark:text-amber-300">
+                        Có {stats?.pending_approval_posts} bài viết đang chờ phê duyệt
+                      </p>
+                      <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                        Vào Hộp thư Phê duyệt để xem xét và quyết định
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab("approvals")}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold text-white bg-amber-600 hover:bg-amber-500 shadow-sm shrink-0"
+                  >
+                    Xem ngay
+                  </button>
+                </div>
+              )}
+
               {/* Recent Queue Mini List */}
               <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 backdrop-blur-sm p-5 shadow-sm dark:shadow-xl">
                 <div className="flex items-center justify-between mb-3">
@@ -197,7 +229,11 @@ export default function Home() {
                                 ? "bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400"
                                 : post.status === "FAILED"
                                 ? "bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-400"
-                                : "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                                : post.status === "PENDING_APPROVAL"
+                                ? "bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                                : post.status === "REJECTED"
+                                ? "bg-rose-100 dark:bg-rose-500/20 text-rose-700 dark:text-rose-400"
+                                : "bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400"
                             }`}
                           >
                             {post.status}
@@ -213,12 +249,18 @@ export default function Home() {
           </div>
         )}
 
-        {/* Tab 2: Quản lý Kênh / Fanpage */}
+        {/* Tab 2: Hộp Thư Phê Duyệt (Approval Inbox) */}
+        {activeTab === "approvals" && <ApprovalInbox />}
+
+        {/* Tab 3: Quản lý Kênh / Fanpage */}
         {activeTab === "pages" && (
           <PageManager channels={channels} loading={loading} onRefresh={fetchAllData} />
         )}
 
-        {/* Tab 3: Lịch trình & Hàng đợi */}
+        {/* Tab 4: Đội Ngũ & Cụm Kênh (Team & Channel Groups) */}
+        {activeTab === "team" && <TeamAndGroupsManager />}
+
+        {/* Tab 5: Lịch trình & Hàng đợi */}
         {activeTab === "history" && (
           <PostList posts={posts} loading={loading} onRefresh={fetchAllData} />
         )}
@@ -232,9 +274,11 @@ export default function Home() {
             <span>•</span>
             <span>DDD Hexagonal Architecture • Golang Backend • Next.js Frontend</span>
           </div>
-          <div className="text-[11px] text-slate-400 dark:text-slate-600">
-            Mã hóa AES-256-GCM Vault • Redis Fast/Heavy Queue • Multi-Channel Publishing
-          </div>
+          <nav aria-label="Thông tin pháp lý" className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-slate-600 dark:text-slate-400">
+            <Link href="/privacy" className="underline-offset-4 hover:text-blue-600 hover:underline dark:hover:text-blue-300">Chính sách quyền riêng tư</Link>
+            <Link href="/terms" className="underline-offset-4 hover:text-blue-600 hover:underline dark:hover:text-blue-300">Điều khoản dịch vụ</Link>
+            <Link href="/data-deletion" className="underline-offset-4 hover:text-blue-600 hover:underline dark:hover:text-blue-300">Yêu cầu xóa dữ liệu</Link>
+          </nav>
         </div>
       </footer>
     </div>

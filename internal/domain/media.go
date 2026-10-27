@@ -47,6 +47,7 @@ type MediaAttachment struct {
 // MediaAsset represents a media asset stored in Local / S3 / MinIO / CDN storage.
 type MediaAsset struct {
 	ID              string    `json:"id"`
+	OrganizationID  string    `json:"organization_id"`
 	FileName        string    `json:"file_name"`
 	StorageKey      string    `json:"storage_key"`
 	PublicURL       string    `json:"public_url"`

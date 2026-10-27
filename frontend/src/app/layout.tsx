@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { DialogProvider } from "@/context/DialogContext";
 import { ThemeProvider } from "@/context/ThemeContext";
+import { OrgProvider } from "@/context/OrgContext";
 
 export const metadata: Metadata = {
   title: "PostPilot - Facebook Multi-Page Automation & Studio",
@@ -46,10 +47,11 @@ export default function RootLayout({
       </head>
       <body className="antialiased min-h-screen text-slate-800 dark:text-slate-100 selection:bg-blue-600 selection:text-white font-sans">
         <ThemeProvider>
-          <DialogProvider>{children}</DialogProvider>
+          <OrgProvider>
+            <DialogProvider>{children}</DialogProvider>
+          </OrgProvider>
         </ThemeProvider>
       </body>
     </html>
   );
 }
-

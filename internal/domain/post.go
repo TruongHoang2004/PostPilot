@@ -4,13 +4,15 @@ import "time"
 
 // Post lifecycle status constants.
 const (
-	PostStatusDraft      = "DRAFT"
-	PostStatusScheduled  = "SCHEDULED"
-	PostStatusQueued     = "QUEUED"
-	PostStatusProcessing = "PROCESSING"
-	PostStatusPublished  = "PUBLISHED"
-	PostStatusFailed     = "FAILED"
-	PostStatusCancelled  = "CANCELLED"
+	PostStatusDraft           = "DRAFT"
+	PostStatusPendingApproval = "PENDING_APPROVAL"
+	PostStatusScheduled       = "SCHEDULED"
+	PostStatusQueued          = "QUEUED"
+	PostStatusProcessing      = "PROCESSING"
+	PostStatusPublished       = "PUBLISHED"
+	PostStatusFailed          = "FAILED"
+	PostStatusCancelled       = "CANCELLED"
+	PostStatusRejected        = "REJECTED"
 )
 
 // Queue tier constants.
@@ -22,6 +24,9 @@ const (
 // Post is the core Aggregate Root of the "Post & Publishing" bounded context.
 type Post struct {
 	ID                string       `json:"id"`
+	OrganizationID    string       `json:"organization_id"`
+	BatchID           string       `json:"batch_id,omitempty"`
+	ChannelGroupID    string       `json:"channel_group_id,omitempty"`
 	ChannelID         string       `json:"channel_id"`
 	ChannelName       string       `json:"channel_name,omitempty"`
 	Platform          PlatformType `json:"platform,omitempty"`
@@ -35,6 +40,10 @@ type Post struct {
 	ScheduledAt       time.Time    `json:"scheduled_at"`
 	PublishedAt       *time.Time   `json:"published_at,omitempty"`
 	ExternalPostID    string       `json:"external_post_id,omitempty"`
+	SubmittedBy       string       `json:"submitted_by,omitempty"`
+	ReviewedBy        string       `json:"reviewed_by,omitempty"`
+	ReviewedAt        *time.Time   `json:"reviewed_at,omitempty"`
+	RejectionNote     string       `json:"rejection_note,omitempty"`
 	RetryCount        int          `json:"retry_count"`
 	MaxRetries        int          `json:"max_retries"`
 	NextRetryAt       *time.Time   `json:"next_retry_at,omitempty"`
@@ -60,11 +69,58 @@ func (p *Post) IsTerminal() bool {
 
 // CanCancel checks business invariants to determine if a post can be cancelled.
 func (p *Post) CanCancel() bool {
-	return p.Status == PostStatusDraft || p.Status == PostStatusScheduled || p.Status == PostStatusFailed
+	return p.Status == PostStatusDraft ||
+		p.Status == PostStatusScheduled ||
+		p.Status == PostStatusQueued ||
+		p.Status == PostStatusFailed ||
+		p.Status == PostStatusPendingApproval ||
+		p.Status == PostStatusRejected
+}
+
+// CanReview checks if a post is in a reviewable state (PENDING_APPROVAL).
+func (p *Post) CanReview() bool {
+	return p.Status == PostStatusPendingApproval
+}
+
+// Approve transitions a pending post to APPROVED and sets status to QUEUED (if due) or SCHEDULED.
+func (p *Post) Approve(reviewerID string, now time.Time) {
+	t := now.UTC()
+	p.ReviewedBy = reviewerID
+	p.ReviewedAt = &t
+	p.RejectionNote = ""
+	p.UpdatedAt = t
+	if p.ScheduledAt.Before(t) || p.ScheduledAt.Equal(t) {
+		p.Status = PostStatusQueued
+	} else {
+		p.Status = PostStatusScheduled
+	}
+}
+
+// Reject transitions a pending post to REJECTED with a reviewer explanation note.
+func (p *Post) Reject(reviewerID, note string, now time.Time) {
+	t := now.UTC()
+	p.Status = PostStatusRejected
+	p.ReviewedBy = reviewerID
+	p.RejectionNote = note
+	p.ReviewedAt = &t
+	p.UpdatedAt = t
+}
+
+// Resubmit resets a rejected or draft post back to PENDING_APPROVAL.
+func (p *Post) Resubmit(now time.Time) {
+	t := now.UTC()
+	p.Status = PostStatusPendingApproval
+	p.RejectionNote = ""
+	p.ReviewedBy = ""
+	p.ReviewedAt = nil
+	p.UpdatedAt = t
 }
 
 // PrepareForCreation applies domain defaults when creating a new Post aggregate.
 func (p *Post) PrepareForCreation(publishNow bool, now time.Time) {
+	if p.OrganizationID == "" {
+		p.OrganizationID = DefaultOrganizationID
+	}
 	p.MediaType = NormalizeMediaType(p.MediaType, p.LinkURL)
 	p.QueueTier = DetermineQueueTier(p.MediaType)
 	if p.ScheduledAt.IsZero() || publishNow {
@@ -125,12 +181,14 @@ type PublishJobPayload struct {
 
 // SystemStats aggregates high-level dashboard metrics.
 type SystemStats struct {
-	TotalChannels   int `json:"total_channels"`
-	ActiveChannels  int `json:"active_channels"`
-	ScheduledPosts  int `json:"scheduled_posts"`
-	QueuedPosts     int `json:"queued_posts"`
-	PublishedPosts  int `json:"published_posts"`
-	FailedPosts     int `json:"failed_posts"`
-	FastQueueDepth  int `json:"fast_queue_depth"`
-	HeavyQueueDepth int `json:"heavy_queue_depth"`
+	TotalChannels        int `json:"total_channels"`
+	ActiveChannels       int `json:"active_channels"`
+	ScheduledPosts       int `json:"scheduled_posts"`
+	QueuedPosts          int `json:"queued_posts"`
+	PublishedPosts       int `json:"published_posts"`
+	FailedPosts          int `json:"failed_posts"`
+	PendingApprovalPosts int `json:"pending_approval_posts"`
+	RejectedPosts        int `json:"rejected_posts"`
+	FastQueueDepth       int `json:"fast_queue_depth"`
+	HeavyQueueDepth      int `json:"heavy_queue_depth"`
 }

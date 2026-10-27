@@ -3,7 +3,7 @@ services:
   # 1. Database Migrator (Chạy từ GHCR image trước khi API/Worker boot)
   # --------------------------------------------------------------------------
   migrate:
-    image: ghcr.io/truonghoang2004/postpilot-backend:sha-98a3190
+    image: ghcr.io/truonghoang2004/postpilot-backend:sha-f745b79
     container_name: fbposter-migrate
     command: ["/app/fb-migrate", "up"]
     environment:
@@ -15,7 +15,7 @@ services:
   # 2. Backend API Server (Chạy từ GHCR image)
   # --------------------------------------------------------------------------
   api:
-    image: ghcr.io/truonghoang2004/postpilot-backend:sha-98a3190
+    image: ghcr.io/truonghoang2004/postpilot-backend:sha-f745b79
     container_name: fbposter-api
     restart: unless-stopped
     command: ["/app/fb-api"]
@@ -37,7 +37,7 @@ services:
       FB_APP_SECRET: ${FB_APP_SECRET:-}
       FB_REDIRECT_URI: ${FB_REDIRECT_URI:-}
       FB_WEBHOOK_VERIFY_TOKEN: ${FB_WEBHOOK_VERIFY_TOKEN:-}
-      FRONTEND_URL: ${FRONTEND_URL:-https://postpilot.nhavuonngoclam.com}
+      FRONTEND_URL: ${FRONTEND_URL:-https://postpilot.hexta.org}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
@@ -54,7 +54,7 @@ services:
   # 3. Background Worker & Scheduler (Chạy từ GHCR image)
   # --------------------------------------------------------------------------
   worker:
-    image: ghcr.io/truonghoang2004/postpilot-backend:sha-98a3190
+    image: ghcr.io/truonghoang2004/postpilot-backend:sha-f745b79
     container_name: fbposter-worker
     restart: unless-stopped
     command: ["/app/fb-worker"]
@@ -91,7 +91,7 @@ services:
   # 4. Next.js Studio Frontend (Chạy từ GHCR image)
   # --------------------------------------------------------------------------
   frontend:
-    image: ghcr.io/truonghoang2004/postpilot-frontend:sha-98a3190
+    image: ghcr.io/truonghoang2004/postpilot-frontend:latest
     container_name: fbposter-frontend
     restart: unless-stopped
     environment:

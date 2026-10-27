@@ -2,7 +2,7 @@
 
 import React from "react";
 import { SystemStats } from "@/lib/types";
-import { Flag, Calendar, CheckCircle2, AlertTriangle, Layers } from "lucide-react";
+import { Flag, Calendar, CheckCircle2, AlertTriangle, Layers, Clock } from "lucide-react";
 
 interface StatsCardsProps {
   stats: SystemStats | null;
@@ -17,18 +17,28 @@ export function StatsCards({ stats }: StatsCardsProps) {
       icon: Flag,
       color: "from-blue-600/20 to-blue-500/5",
       borderColor: "border-blue-500/20",
-      textColor: "text-blue-400",
-      iconBg: "bg-blue-500/10 text-blue-400",
+      textColor: "text-blue-500 dark:text-blue-400",
+      iconBg: "bg-blue-500/10 text-blue-500 dark:text-blue-400",
+    },
+    {
+      title: "Chờ Phê Duyệt",
+      value: stats?.pending_approval_posts ?? 0,
+      subtext: "Bài viết cần kiểm duyệt",
+      icon: Clock,
+      color: "from-amber-600/20 to-amber-500/5",
+      borderColor: "border-amber-500/20",
+      textColor: "text-amber-500 dark:text-amber-400",
+      iconBg: "bg-amber-500/10 text-amber-500 dark:text-amber-400",
     },
     {
       title: "Bài Viết Đang Hẹn Giờ",
       value: stats?.scheduled_posts ?? 0,
       subtext: "Đang chờ đến giờ phát sóng",
       icon: Calendar,
-      color: "from-amber-600/20 to-amber-500/5",
-      borderColor: "border-amber-500/20",
-      textColor: "text-amber-400",
-      iconBg: "bg-amber-500/10 text-amber-400",
+      color: "from-indigo-600/20 to-indigo-500/5",
+      borderColor: "border-indigo-500/20",
+      textColor: "text-indigo-500 dark:text-indigo-400",
+      iconBg: "bg-indigo-500/10 text-indigo-500 dark:text-indigo-400",
     },
     {
       title: "Đã Đăng Thành Công",
@@ -37,8 +47,8 @@ export function StatsCards({ stats }: StatsCardsProps) {
       icon: CheckCircle2,
       color: "from-emerald-600/20 to-emerald-500/5",
       borderColor: "border-emerald-500/20",
-      textColor: "text-emerald-400",
-      iconBg: "bg-emerald-500/10 text-emerald-400",
+      textColor: "text-emerald-500 dark:text-emerald-400",
+      iconBg: "bg-emerald-500/10 text-emerald-500 dark:text-emerald-400",
     },
     {
       title: "Lỗi / Đang Retry",
@@ -47,8 +57,8 @@ export function StatsCards({ stats }: StatsCardsProps) {
       icon: AlertTriangle,
       color: "from-rose-600/20 to-rose-500/5",
       borderColor: "border-rose-500/20",
-      textColor: "text-rose-400",
-      iconBg: "bg-rose-500/10 text-rose-400",
+      textColor: "text-rose-500 dark:text-rose-400",
+      iconBg: "bg-rose-500/10 text-rose-500 dark:text-rose-400",
     },
     {
       title: "Fast / Heavy Queue",
@@ -57,13 +67,13 @@ export function StatsCards({ stats }: StatsCardsProps) {
       icon: Layers,
       color: "from-purple-600/20 to-purple-500/5",
       borderColor: "border-purple-500/20",
-      textColor: "text-purple-400",
-      iconBg: "bg-purple-500/10 text-purple-400",
+      textColor: "text-purple-500 dark:text-purple-400",
+      iconBg: "bg-purple-500/10 text-purple-500 dark:text-purple-400",
     },
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 mb-6">
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-6">
       {cards.map((card, idx) => {
         const Icon = card.icon;
         return (
