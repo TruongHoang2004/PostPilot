@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -103,7 +104,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := s.store.GetUserByEmail(ctx, req.Email)
-	if err != nil || user == nil {
+	if err != nil || user == nil || !user.IsActive {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid email or password"})
 		return
 	}
@@ -161,21 +162,13 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 
 	user, err := s.store.GetUserByID(ctx, tc.UserID)
 	if err != nil || user == nil {
-		user = &domain.User{
-			ID:       tc.UserID,
-			Email:    tc.UserEmail,
-			FullName: "Admin User",
-			IsActive: true,
-		}
+		writeJSON(w, 401, map[string]any{"error": "account unavailable"})
+		return
 	}
-
 	org, err := s.store.GetOrganizationByID(ctx, tc.OrganizationID)
 	if err != nil || org == nil {
-		org = &domain.Organization{
-			ID:   tc.OrganizationID,
-			Name: "Default Organization",
-			Slug: "default-org",
-		}
+		writeJSON(w, 503, map[string]any{"error": "workspace unavailable"})
+		return
 	}
 
 	var member *domain.OrganizationMember
@@ -189,10 +182,27 @@ func (s *Server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if member == nil {
+		writeJSON(w, 403, map[string]any{"error": "organization membership required"})
+		return
+	}
+	channelRoles := make(map[string]domain.GroupRole)
+	channels, err := s.store.ListChannels(ctx)
+	if err != nil {
+		writeJSON(w, 503, map[string]any{"error": "unable to load channel permissions"})
+		return
+	}
+	for _, ch := range channels {
+		if role, ok := s.resolveChannelPermission(ctx, ch.ID); ok {
+			channelRoles[ch.ID] = role
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":         user,
-		"organization": org,
-		"member":       member,
+		"user":          user,
+		"organization":  org,
+		"member":        member,
+		"channel_roles": channelRoles,
 	})
 }
 
@@ -256,6 +266,10 @@ func (s *Server) handleListOrganizationMembers(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	if tc := domain.TenantFromContext(ctx); tc.OrganizationID != orgID {
+		writeJSON(w, 403, map[string]any{"error": "organization mismatch"})
+		return
+	}
 	members, err := s.store.ListOrganizationMembers(ctx, orgID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -278,7 +292,7 @@ func (s *Server) handleAddOrganizationMember(w http.ResponseWriter, r *http.Requ
 	}
 
 	// RBAC check: only OWNER or ADMIN can invite/add members to their organization
-	if tc.OrganizationID == orgID && !tc.IsOrgAdminOrOwner() {
+	if tc.OrganizationID != orgID || !tc.IsOrgAdminOrOwner() {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden: only organization owner or admin can add members"})
 		return
 	}
@@ -347,7 +361,7 @@ func (s *Server) handleRemoveOrganizationMember(w http.ResponseWriter, r *http.R
 	orgID := r.PathValue("id")
 	memberID := r.PathValue("memberId")
 
-	if tc.OrganizationID == orgID && !tc.IsOrgAdminOrOwner() {
+	if tc.OrganizationID != orgID || !tc.IsOrgAdminOrOwner() {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden: only organization owner or admin can remove members"})
 		return
 	}
@@ -437,4 +451,19 @@ func generateRandomHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// handleClaimLegacyWorkspace transfers the seeded legacy workspace once, with operator proof.
+func (s *Server) handleClaimLegacyWorkspace(w http.ResponseWriter, r *http.Request) {
+	key := r.Header.Get("X-Admin-Key")
+	if len(s.cfg.APIAdminKey) < 32 || s.cfg.APIAdminKey == "dev-admin-secret-key-change-me" || subtle.ConstantTimeCompare([]byte(key), []byte(s.cfg.APIAdminKey)) != 1 {
+		writeJSON(w, 403, map[string]any{"error": "valid server administrator key required"})
+		return
+	}
+	tc := domain.TenantFromContext(r.Context())
+	if err := s.store.ClaimLegacyWorkspace(r.Context(), tc.UserID); err != nil {
+		writeJSON(w, 409, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"organization_id": domain.DefaultOrganizationID})
 }

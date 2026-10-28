@@ -35,6 +35,9 @@ export function TeamAndGroupsManager() {
   const { currentOrg, canManageOrg, channelGroups, refreshGroups } = useOrg();
   const { confirm, toast } = useDialog();
 
+  const [legacyKey, setLegacyKey] = useState("");
+  const [claimingLegacy, setClaimingLegacy] = useState(false);
+  const { refreshOrgs } = useOrg();
   const [activeTab, setActiveTab] = useState<"members" | "groups">("members");
 
   // Members state
@@ -307,6 +310,20 @@ export function TeamAndGroupsManager() {
 
   return (
     <div className="space-y-6">
+      {canManageOrg && <details className="mb-6 rounded-xl border border-slate-300 p-4 dark:border-slate-700">
+        <summary className="cursor-pointer text-sm font-semibold">Nhận workspace từ phiên bản cũ (một lần)</summary>
+        <p className="mt-3 text-sm">Nếu Page và bài cũ ở Default Workspace, nhập API_ADMIN_KEY của máy chủ để chuyển quyền quản lý sang tài khoản đang đăng nhập. Khóa chỉ gửi cho thao tác này, không được lưu trong trình duyệt.</p>
+        <form className="mt-3 flex flex-wrap gap-3" onSubmit={async e => {
+          e.preventDefault(); setClaimingLegacy(true);
+          try { await api.claimLegacyWorkspace(legacyKey); setLegacyKey(""); await refreshOrgs(); toast("Đã nhận workspace cũ. Chọn Default Workspace ở thanh trên.", "success"); }
+          catch(e) { toast(e instanceof Error ? e.message : "Không thể nhận workspace", "danger"); }
+          finally { setClaimingLegacy(false); }
+        }}>
+          <input type="password" aria-label="Khóa quản trị máy chủ" autoComplete="off" value={legacyKey} onChange={e => setLegacyKey(e.target.value)} required className="min-w-0 flex-1 rounded-lg border p-2 text-slate-900" />
+          <button disabled={claimingLegacy} className="rounded-lg bg-blue-600 px-4 py-2 text-white">{claimingLegacy ? "Đang xác minh…" : "Nhận workspace cũ"}</button>
+        </form>
+      </details>}
+
       {/* Top Header Card */}
       <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/60 backdrop-blur-sm p-5 sm:p-6 shadow-sm dark:shadow-xl space-y-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">

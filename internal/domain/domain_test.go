@@ -202,54 +202,54 @@ func TestPostApprovalFSMTransitions(t *testing.T) {
 func TestRBACPermissionMatrixResolution(t *testing.T) {
 	// Table-driven verification of Most Permissive Wins resolution
 	cases := []struct {
-		name         string
-		roles        []GroupRole
-		expectedRole GroupRole
-		canCreate    bool
-		canPublishReq bool // Can publish when approval required
+		name            string
+		roles           []GroupRole
+		expectedRole    GroupRole
+		canCreate       bool
+		canPublishReq   bool // Can publish when approval required
 		canPublishNoReq bool // Can publish when approval not required
-		canApprove   bool
-		canManage    bool
+		canApprove      bool
+		canManage       bool
 	}{
 		{
-			name:         "Viewer only",
-			roles:        []GroupRole{GroupRoleViewer},
-			expectedRole: GroupRoleViewer,
-			canCreate:    false,
-			canPublishReq: false,
+			name:            "Viewer only",
+			roles:           []GroupRole{GroupRoleViewer},
+			expectedRole:    GroupRoleViewer,
+			canCreate:       false,
+			canPublishReq:   false,
 			canPublishNoReq: false,
-			canApprove:   false,
-			canManage:    false,
+			canApprove:      false,
+			canManage:       false,
 		},
 		{
-			name:         "Viewer + Editor -> Editor wins",
-			roles:        []GroupRole{GroupRoleViewer, GroupRoleEditor},
-			expectedRole: GroupRoleEditor,
-			canCreate:    true,
-			canPublishReq: false, // Editor cannot publish directly if approval required
+			name:            "Viewer + Editor -> Editor wins",
+			roles:           []GroupRole{GroupRoleViewer, GroupRoleEditor},
+			expectedRole:    GroupRoleEditor,
+			canCreate:       true,
+			canPublishReq:   false, // Editor cannot publish directly if approval required
 			canPublishNoReq: true,  // Editor CAN publish directly if approval NOT required
-			canApprove:   false,
-			canManage:    false,
+			canApprove:      false,
+			canManage:       false,
 		},
 		{
-			name:         "Editor + Approver -> Approver wins",
-			roles:        []GroupRole{GroupRoleEditor, GroupRoleApprover},
-			expectedRole: GroupRoleApprover,
-			canCreate:    true,
-			canPublishReq: true,
+			name:            "Editor + Approver -> Approver wins",
+			roles:           []GroupRole{GroupRoleEditor, GroupRoleApprover},
+			expectedRole:    GroupRoleApprover,
+			canCreate:       true,
+			canPublishReq:   true,
 			canPublishNoReq: true,
-			canApprove:   true,
-			canManage:    false,
+			canApprove:      true,
+			canManage:       false,
 		},
 		{
-			name:         "Viewer + Approver + Manager -> Manager wins",
-			roles:        []GroupRole{GroupRoleViewer, GroupRoleApprover, GroupRoleManager},
-			expectedRole: GroupRoleManager,
-			canCreate:    true,
-			canPublishReq: true,
+			name:            "Viewer + Approver + Manager -> Manager wins",
+			roles:           []GroupRole{GroupRoleViewer, GroupRoleApprover, GroupRoleManager},
+			expectedRole:    GroupRoleManager,
+			canCreate:       true,
+			canPublishReq:   true,
 			canPublishNoReq: true,
-			canApprove:   true,
-			canManage:    true,
+			canApprove:      true,
+			canManage:       true,
 		},
 	}
 
@@ -277,4 +277,3 @@ func TestRBACPermissionMatrixResolution(t *testing.T) {
 		})
 	}
 }
-

@@ -41,8 +41,7 @@ func (t *TelegramNotifier) Enabled() bool {
 // SendAlert sends a Markdown-formatted alert to the configured Telegram chat.
 func (t *TelegramNotifier) SendAlert(ctx context.Context, title string, details string) error {
 	if !t.Enabled() {
-		t.logger.Debug("Telegram notifier not configured, logging alert locally", "title", title, "details", details)
-		return nil
+		return fmt.Errorf("Telegram notifications disabled: configure bot token and chat ID")
 	}
 
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.botToken)

@@ -29,6 +29,9 @@ func TenantFromContext(ctx context.Context) *domain.TenantContext {
 
 // Store defines the storage Output Port interface for the entire system.
 type Store interface {
+	Ping(ctx context.Context) error
+	ListOrganizationsForWorker(ctx context.Context) ([]domain.Organization, error)
+	ClaimLegacyWorkspace(ctx context.Context, userID string) error
 	// Channel Management
 	UpsertChannel(ctx context.Context, channel *domain.Channel) (*domain.Channel, error)
 	ListChannels(ctx context.Context) ([]domain.Channel, error)
@@ -100,12 +103,17 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 }
 
 func (s *PostgresStore) UpsertChannel(ctx context.Context, c *domain.Channel) (*domain.Channel, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if c.OrganizationID != "" && c.OrganizationID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	c.Platform = domain.NormalizePlatform(c.Platform)
 	if c.OrganizationID == "" {
 		c.OrganizationID = TenantFromContext(ctx).OrganizationID
-	}
-	if c.OrganizationID == "" {
-		c.OrganizationID = domain.DefaultOrganizationID
 	}
 
 	query := `
@@ -136,6 +144,10 @@ func (s *PostgresStore) UpsertChannel(ctx context.Context, c *domain.Channel) (*
 }
 
 func (s *PostgresStore) ListChannels(ctx context.Context) ([]domain.Channel, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	orgID := TenantFromContext(ctx).OrganizationID
 
 	query := `
@@ -184,17 +196,21 @@ func (s *PostgresStore) ListChannels(ctx context.Context) ([]domain.Channel, err
 }
 
 func (s *PostgresStore) GetChannelByID(ctx context.Context, id string) (*domain.Channel, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	query := `
 	SELECT id, organization_id::text, platform, external_id, name, category, encrypted_access_token, token_status,
 	       COALESCE(last_checked_at::text, ''),
 	       rate_limit_call_count::text, rate_limit_total_time::text, rate_limit_total_cputime::text,
 	       is_active::text, created_at::text, updated_at::text
 	FROM channels
-	WHERE id = $1;`
+	WHERE id = $1 AND organization_id = $2;`
 
 	var c domain.Channel
 	var orgIDStr, platformStr, lastCheckedStr, callStr, timeStr, cpuStr, activeStr, createdStr, updatedStr string
-	err := s.db.QueryRowContext(ctx, query, id).Scan(
+	err := s.db.QueryRowContext(ctx, query, id, TenantFromContext(ctx).OrganizationID).Scan(
 		&c.ID, &orgIDStr, &platformStr, &c.ExternalID, &c.Name, &c.Category, &c.EncryptedAccessToken, &c.TokenStatus,
 		&lastCheckedStr,
 		&callStr, &timeStr, &cpuStr, &activeStr, &createdStr, &updatedStr,
@@ -223,6 +239,10 @@ func (s *PostgresStore) GetChannelByID(ctx context.Context, id string) (*domain.
 }
 
 func (s *PostgresStore) DeleteChannel(ctx context.Context, id string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+
 	tc := TenantFromContext(ctx)
 	var res sql.Result
 	var err error
@@ -242,6 +262,10 @@ func (s *PostgresStore) DeleteChannel(ctx context.Context, id string) error {
 }
 
 func (s *PostgresStore) UpdateChannelTokenStatus(ctx context.Context, id string, status string, checkedAt time.Time) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+
 	_, err := s.db.ExecContext(
 		ctx,
 		"UPDATE channels SET token_status = $1, last_checked_at = $2, updated_at = NOW() WHERE id = $3",
@@ -251,6 +275,10 @@ func (s *PostgresStore) UpdateChannelTokenStatus(ctx context.Context, id string,
 }
 
 func (s *PostgresStore) UpdateChannelRateLimit(ctx context.Context, id string, usage domain.RateLimitUsage) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+
 	_, err := s.db.ExecContext(
 		ctx,
 		`UPDATE channels
@@ -262,12 +290,21 @@ func (s *PostgresStore) UpdateChannelRateLimit(ctx context.Context, id string, u
 }
 
 func (s *PostgresStore) CreatePost(ctx context.Context, post *domain.Post) (*domain.Post, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if post.OrganizationID != "" && post.OrganizationID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	tc := TenantFromContext(ctx)
+	if _, err := s.GetChannelByID(ctx, post.ChannelID); err != nil {
+		return nil, err
+	}
+
 	if post.OrganizationID == "" {
 		post.OrganizationID = tc.OrganizationID
-	}
-	if post.OrganizationID == "" {
-		post.OrganizationID = domain.DefaultOrganizationID
 	}
 	if post.CreatedBy == "" {
 		post.CreatedBy = tc.UserID
@@ -311,6 +348,10 @@ func (s *PostgresStore) CreatePost(ctx context.Context, post *domain.Post) (*dom
 }
 
 func (s *PostgresStore) GetPostByID(ctx context.Context, id string) (*domain.Post, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	query := `
 	SELECT p.id, p.organization_id::text, p.channel_id, COALESCE(c.name, ''), COALESCE(c.platform, 'FACEBOOK'), COALESCE(c.external_id, ''),
 	       COALESCE(p.channel_group_id::text, ''), COALESCE(p.batch_id::text, ''),
@@ -321,12 +362,12 @@ func (s *PostgresStore) GetPostByID(ctx context.Context, id string) (*domain.Pos
 	       p.created_by, p.created_at::text, p.updated_at::text
 	FROM posts p
 	LEFT JOIN channels c ON c.id = p.channel_id
-	WHERE p.id = $1;`
+	WHERE p.id = $1 AND p.organization_id = $2;`
 
 	var post domain.Post
 	var orgIDStr, platformStr, groupIDStr, batchIDStr, mediaStr, schedStr, pubStr string
 	var subStr, revStr, revAtStr, retryStr, maxRetryStr, nextRetryStr, errCodeStr, createdStr, updatedStr string
-	err := s.db.QueryRowContext(ctx, query, id).Scan(
+	err := s.db.QueryRowContext(ctx, query, id, TenantFromContext(ctx).OrganizationID).Scan(
 		&post.ID, &orgIDStr, &post.ChannelID, &post.ChannelName, &platformStr, &post.ExternalChannelID,
 		&groupIDStr, &batchIDStr,
 		&post.Content, &post.LinkURL, &post.MediaType, &mediaStr, &post.Status, &post.QueueTier,
@@ -372,6 +413,10 @@ func (s *PostgresStore) GetPostByID(ctx context.Context, id string) (*domain.Pos
 }
 
 func (s *PostgresStore) ListPosts(ctx context.Context, statusFilter string, limit int) ([]domain.Post, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -452,13 +497,17 @@ func (s *PostgresStore) ListPosts(ctx context.Context, statusFilter string, limi
 // ROW_NUMBER() OVER (PARTITION BY organization_id ORDER BY scheduled_at ASC)
 // combined with FOR UPDATE SKIP LOCKED.
 func (s *PostgresStore) ClaimDuePosts(ctx context.Context, now time.Time, batchSize int) ([]domain.Post, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	query := `
 	WITH due_candidates AS (
 		SELECT id, organization_id,
 		       ROW_NUMBER() OVER (PARTITION BY organization_id ORDER BY scheduled_at ASC) as rnum
 		FROM posts
-		WHERE (status = 'SCHEDULED' AND scheduled_at <= $1)
-		   OR (status = 'FAILED' AND retry_count < max_retries AND next_retry_at IS NOT NULL AND next_retry_at <= $1)
+		WHERE organization_id = $3 AND ((status = 'SCHEDULED' AND scheduled_at <= $1)
+		   OR (status = 'FAILED' AND retry_count < max_retries AND next_retry_at IS NOT NULL AND next_retry_at <= $1))
 	),
 	selected AS (
 		SELECT p.id
@@ -474,7 +523,7 @@ func (s *PostgresStore) ClaimDuePosts(ctx context.Context, now time.Time, batchS
 	WHERE p.id = selected.id
 	RETURNING p.id, p.organization_id::text, p.channel_id, p.queue_tier, p.retry_count::text;`
 
-	rows, err := s.db.QueryContext(ctx, query, now, batchSize)
+	rows, err := s.db.QueryContext(ctx, query, now, batchSize, TenantFromContext(ctx).OrganizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -499,35 +548,31 @@ func (s *PostgresStore) ClaimDuePosts(ctx context.Context, now time.Time, batchS
 }
 
 func (s *PostgresStore) MarkPostProcessing(ctx context.Context, postID string) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE posts SET status = 'PROCESSING', updated_at = NOW() WHERE id = $1", postID)
-	return err
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, "UPDATE posts SET status='PROCESSING',updated_at=NOW() WHERE id=$1 AND organization_id=$2 AND status IN ('QUEUED','SCHEDULED','FAILED')", postID, TenantFromContext(ctx).OrganizationID)
+	return affected(res, err)
 }
-
-func (s *PostgresStore) MarkPostPublished(ctx context.Context, postID string, externalPostID string, publishedAt time.Time) error {
-	_, err := s.db.ExecContext(
-		ctx,
-		`UPDATE posts
-		 SET status = 'PUBLISHED', external_post_id = $1, published_at = $2,
-		     last_error_code = 0, last_error_message = '', updated_at = NOW()
-		 WHERE id = $3`,
-		externalPostID, publishedAt, postID,
-	)
-	return err
+func (s *PostgresStore) MarkPostPublished(ctx context.Context, postID, externalPostID string, publishedAt time.Time) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, "UPDATE posts SET status='PUBLISHED',external_post_id=$1,published_at=$2,last_error_code=0,last_error_message='',updated_at=NOW() WHERE id=$3 AND organization_id=$4", externalPostID, publishedAt, postID, TenantFromContext(ctx).OrganizationID)
+	return affected(res, err)
 }
-
 func (s *PostgresStore) MarkPostFailedOrRetry(ctx context.Context, postID string, retryCount int, nextRetryAt *time.Time, finalStatus string, errCode int, errMsg string) error {
-	_, err := s.db.ExecContext(
-		ctx,
-		`UPDATE posts
-		 SET status = $1, retry_count = $2, next_retry_at = $3,
-		     last_error_code = $4, last_error_message = $5, updated_at = NOW()
-		 WHERE id = $6`,
-		finalStatus, retryCount, nextRetryAt, errCode, errMsg, postID,
-	)
-	return err
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, "UPDATE posts SET status=$1,retry_count=$2,next_retry_at=$3,last_error_code=$4,last_error_message=$5,updated_at=NOW() WHERE id=$6 AND organization_id=$7", finalStatus, retryCount, nextRetryAt, errCode, errMsg, postID, TenantFromContext(ctx).OrganizationID)
+	return affected(res, err)
 }
-
 func (s *PostgresStore) CancelPost(ctx context.Context, postID string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+
 	tc := TenantFromContext(ctx)
 	var res sql.Result
 	var err error
@@ -906,11 +951,16 @@ func (s *PostgresStore) AcceptInvitation(ctx context.Context, token string, user
 // ----------------------------------------------------------------------------
 
 func (s *PostgresStore) CreateChannelGroup(ctx context.Context, g *domain.ChannelGroup) (*domain.ChannelGroup, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if g.OrganizationID != "" && g.OrganizationID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	if g.OrganizationID == "" {
 		g.OrganizationID = TenantFromContext(ctx).OrganizationID
-	}
-	if g.OrganizationID == "" {
-		g.OrganizationID = domain.DefaultOrganizationID
 	}
 
 	query := `
@@ -932,6 +982,14 @@ func (s *PostgresStore) CreateChannelGroup(ctx context.Context, g *domain.Channe
 }
 
 func (s *PostgresStore) ListChannelGroups(ctx context.Context, orgID string) ([]domain.ChannelGroup, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	query := `
 	SELECT cg.id, cg.organization_id::text, cg.name, cg.description, cg.require_approval::text,
 	       (SELECT COUNT(*) FROM channel_group_items cgi WHERE cgi.channel_group_id = cg.id)::text AS channel_count,
@@ -969,6 +1027,14 @@ func (s *PostgresStore) ListChannelGroups(ctx context.Context, orgID string) ([]
 }
 
 func (s *PostgresStore) GetChannelGroupByID(ctx context.Context, orgID string, groupID string) (*domain.ChannelGroup, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	query := `
 	SELECT cg.id, cg.organization_id::text, cg.name, cg.description, cg.require_approval::text,
 	       (SELECT COUNT(*) FROM channel_group_items cgi WHERE cgi.channel_group_id = cg.id)::text AS channel_count,
@@ -1017,6 +1083,14 @@ func (s *PostgresStore) GetChannelGroupByID(ctx context.Context, orgID string, g
 }
 
 func (s *PostgresStore) DeleteChannelGroup(ctx context.Context, orgID string, groupID string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return err
+	}
+
 	res, err := s.db.ExecContext(ctx, "DELETE FROM channel_groups WHERE id = $1 AND organization_id = $2", groupID, orgID)
 	if err != nil {
 		return err
@@ -1029,6 +1103,20 @@ func (s *PostgresStore) DeleteChannelGroup(ctx context.Context, orgID string, gr
 }
 
 func (s *PostgresStore) SetChannelGroupChannels(ctx context.Context, orgID string, groupID string, channelIDs []string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return err
+	}
+
+	for _, id := range channelIDs {
+		if _, err := s.GetChannelByID(ctx, id); err != nil {
+			return err
+		}
+	}
+
 	var count int
 	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM channel_groups WHERE id = $1 AND organization_id = $2", groupID, orgID).Scan(&count)
 	if err != nil || count == 0 {
@@ -1058,6 +1146,27 @@ func (s *PostgresStore) SetChannelGroupChannels(ctx context.Context, orgID strin
 }
 
 func (s *PostgresStore) SetChannelGroupPermission(ctx context.Context, p *domain.ChannelGroupPermission) (*domain.ChannelGroupPermission, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
+	if _, err := s.GetChannelGroupByID(ctx, TenantFromContext(ctx).OrganizationID, p.ChannelGroupID); err != nil {
+		return nil, err
+	}
+	members, err := s.ListOrganizationMembers(ctx, TenantFromContext(ctx).OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	found := false
+	for _, member := range members {
+		if member.UserID == p.UserID {
+			found = true
+		}
+	}
+	if !found {
+		return nil, errors.New("user does not belong to organization")
+	}
+
 	query := `
 	INSERT INTO channel_group_permissions (channel_group_id, user_id, group_role, created_at, updated_at)
 	VALUES ($1, $2, $3, NOW(), NOW())
@@ -1067,7 +1176,7 @@ func (s *PostgresStore) SetChannelGroupPermission(ctx context.Context, p *domain
 	RETURNING id, created_at::text, updated_at::text;`
 
 	var createdStr, updatedStr string
-	err := s.db.QueryRowContext(
+	err = s.db.QueryRowContext(
 		ctx, query,
 		p.ChannelGroupID, p.UserID, string(p.GroupRole),
 	).Scan(&p.ID, &createdStr, &updatedStr)
@@ -1084,6 +1193,14 @@ func (s *PostgresStore) SetChannelGroupPermission(ctx context.Context, p *domain
 }
 
 func (s *PostgresStore) DeleteChannelGroupPermission(ctx context.Context, orgID string, groupID string, memberID string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return err
+	}
+
 	query := `
 	DELETE FROM channel_group_permissions cgp
 	USING channel_groups cg
@@ -1104,6 +1221,14 @@ func (s *PostgresStore) DeleteChannelGroupPermission(ctx context.Context, orgID 
 }
 
 func (s *PostgresStore) ListChannelGroupPermissions(ctx context.Context, orgID string, groupID string) ([]domain.ChannelGroupPermission, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	query := `
 	SELECT cgp.id, cgp.channel_group_id::text, cgp.user_id::text, cgp.group_role,
 	       COALESCE(u.email, ''), COALESCE(u.full_name, ''),
@@ -1140,6 +1265,14 @@ func (s *PostgresStore) ListChannelGroupPermissions(ctx context.Context, orgID s
 }
 
 func (s *PostgresStore) GetUserChannelRoles(ctx context.Context, orgID string, userID string, channelID string) ([]domain.GroupRole, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	query := `
 	SELECT cgp.group_role
 	FROM channel_group_permissions cgp
@@ -1169,6 +1302,10 @@ func (s *PostgresStore) GetUserChannelRoles(ctx context.Context, orgID string, u
 // ----------------------------------------------------------------------------
 
 func (s *PostgresStore) ReviewPost(ctx context.Context, postID string, reviewerID string, action domain.ApprovalAction, feedbackNote string) (*domain.Post, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	post, err := s.GetPostByID(ctx, postID)
 	if err != nil {
 		return nil, err
@@ -1203,8 +1340,8 @@ func (s *PostgresStore) ReviewPost(ctx context.Context, postID string, reviewerI
 	postQuery := `
 	UPDATE posts
 	SET status = $1, reviewed_by = $2, reviewed_at = NOW(), rejection_note = $3, updated_at = NOW()
-	WHERE id = $4;`
-	if _, err := tx.ExecContext(ctx, postQuery, newStatus, reviewerID, feedbackNote, postID); err != nil {
+	WHERE id = $4 AND organization_id = $5;`
+	if _, err := tx.ExecContext(ctx, postQuery, newStatus, reviewerID, feedbackNote, postID, TenantFromContext(ctx).OrganizationID); err != nil {
 		return nil, err
 	}
 
@@ -1216,6 +1353,10 @@ func (s *PostgresStore) ReviewPost(ctx context.Context, postID string, reviewerI
 }
 
 func (s *PostgresStore) ResubmitPost(ctx context.Context, postID string, content string, scheduledAt time.Time) (*domain.Post, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	post, err := s.GetPostByID(ctx, postID)
 	if err != nil {
 		return nil, err
@@ -1238,9 +1379,9 @@ func (s *PostgresStore) ResubmitPost(ctx context.Context, postID string, content
 	    reviewed_by = NULL,
 	    reviewed_at = NULL,
 	    updated_at = NOW()
-	WHERE id = $3;`
+	WHERE id = $3 AND organization_id = $4;`
 
-	if _, err := s.db.ExecContext(ctx, query, content, schedArg, postID); err != nil {
+	if _, err := s.db.ExecContext(ctx, query, content, schedArg, postID, TenantFromContext(ctx).OrganizationID); err != nil {
 		return nil, err
 	}
 
@@ -1248,6 +1389,13 @@ func (s *PostgresStore) ResubmitPost(ctx context.Context, postID string, content
 }
 
 func (s *PostgresStore) ListPostApprovals(ctx context.Context, postID string) ([]domain.PostApproval, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if _, err := s.GetPostByID(ctx, postID); err != nil {
+		return nil, err
+	}
+
 	query := `
 	SELECT pa.id, pa.post_id::text, pa.reviewer_id::text, COALESCE(u.full_name, COALESCE(u.email, '')),
 	       pa.action, pa.note, pa.created_at::text
@@ -1286,9 +1434,6 @@ func (s *PostgresStore) ListPostApprovals(ctx context.Context, postID string) ([
 func (s *PostgresStore) InsertAuditLog(ctx context.Context, log *domain.AuditLog) error {
 	if log.OrganizationID == "" {
 		log.OrganizationID = TenantFromContext(ctx).OrganizationID
-	}
-	if log.OrganizationID == "" {
-		log.OrganizationID = domain.DefaultOrganizationID
 	}
 	if len(log.Details) == 0 {
 		log.Details = json.RawMessage("{}")
@@ -1355,6 +1500,13 @@ func (s *PostgresStore) ListAuditLogs(ctx context.Context, orgID string, limit i
 }
 
 func (s *PostgresStore) InsertPublishLog(ctx context.Context, l *domain.PublishLog) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	if _, err := s.GetPostByID(ctx, l.PostID); err != nil {
+		return err
+	}
+
 	query := `
 	INSERT INTO publish_logs (
 		post_id, channel_id, attempt_number, action, http_status,
@@ -1370,6 +1522,13 @@ func (s *PostgresStore) InsertPublishLog(ctx context.Context, l *domain.PublishL
 }
 
 func (s *PostgresStore) ListPublishLogsByPost(ctx context.Context, postID string) ([]domain.PublishLog, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if _, err := s.GetPostByID(ctx, postID); err != nil {
+		return nil, err
+	}
+
 	query := `
 	SELECT id, post_id, channel_id, attempt_number::text, action, http_status::text,
 	       error_code::text, error_subcode::text, request_summary, response_body,
@@ -1409,11 +1568,16 @@ func (s *PostgresStore) ListPublishLogsByPost(ctx context.Context, postID string
 }
 
 func (s *PostgresStore) CreateMediaAsset(ctx context.Context, asset *domain.MediaAsset) (*domain.MediaAsset, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if asset.OrganizationID != "" && asset.OrganizationID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	if asset.OrganizationID == "" {
 		asset.OrganizationID = TenantFromContext(ctx).OrganizationID
-	}
-	if asset.OrganizationID == "" {
-		asset.OrganizationID = domain.DefaultOrganizationID
 	}
 
 	query := `
@@ -1434,6 +1598,10 @@ func (s *PostgresStore) CreateMediaAsset(ctx context.Context, asset *domain.Medi
 }
 
 func (s *PostgresStore) GetSystemStats(ctx context.Context) (*domain.SystemStats, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	stats := &domain.SystemStats{}
 	orgID := TenantFromContext(ctx).OrganizationID
 
@@ -1496,10 +1664,10 @@ type InMemoryStore struct {
 	users                   map[string]*domain.User
 	usersByEmail            map[string]string // email -> user.ID
 	organizations           map[string]*domain.Organization
-	members                 map[string]*domain.OrganizationMember // member.ID -> member
+	members                 map[string]*domain.OrganizationMember     // member.ID -> member
 	invitations             map[string]*domain.OrganizationInvitation // token_hash -> invitation
-	channelGroups           map[string]*domain.ChannelGroup // group.ID -> group
-	channelGroupItems       map[string][]string // group.ID -> []channel.ID
+	channelGroups           map[string]*domain.ChannelGroup           // group.ID -> group
+	channelGroupItems       map[string][]string                       // group.ID -> []channel.ID
 	channelGroupPermissions map[string]*domain.ChannelGroupPermission // perm.ID -> perm
 	channels                map[string]*domain.Channel
 	posts                   map[string]*domain.Post
@@ -1595,15 +1763,20 @@ func (m *InMemoryStore) enrichChannelGroups(c *domain.Channel) {
 }
 
 func (m *InMemoryStore) UpsertChannel(ctx context.Context, channel *domain.Channel) (*domain.Channel, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if channel.OrganizationID != "" && channel.OrganizationID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	channel.Platform = domain.NormalizePlatform(channel.Platform)
 	if channel.OrganizationID == "" {
 		channel.OrganizationID = TenantFromContext(ctx).OrganizationID
-	}
-	if channel.OrganizationID == "" {
-		channel.OrganizationID = domain.DefaultOrganizationID
 	}
 
 	for _, existing := range m.channels {
@@ -1635,6 +1808,10 @@ func (m *InMemoryStore) UpsertChannel(ctx context.Context, channel *domain.Chann
 }
 
 func (m *InMemoryStore) ListChannels(ctx context.Context) ([]domain.Channel, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -1651,6 +1828,10 @@ func (m *InMemoryStore) ListChannels(ctx context.Context) ([]domain.Channel, err
 }
 
 func (m *InMemoryStore) GetChannelByID(ctx context.Context, id string) (*domain.Channel, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -1668,11 +1849,15 @@ func (m *InMemoryStore) GetChannelByID(ctx context.Context, id string) (*domain.
 }
 
 func (m *InMemoryStore) DeleteChannel(ctx context.Context, id string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	c, ok := m.channels[id]
-	if !ok {
+	if !ok || c.OrganizationID != TenantFromContext(ctx).OrganizationID {
 		return errors.New("channel not found")
 	}
 	tc := TenantFromContext(ctx)
@@ -1700,11 +1885,15 @@ func (m *InMemoryStore) DeleteChannel(ctx context.Context, id string) error {
 }
 
 func (m *InMemoryStore) UpdateChannelTokenStatus(ctx context.Context, id string, status string, checkedAt time.Time) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	c, ok := m.channels[id]
-	if !ok {
+	if !ok || c.OrganizationID != TenantFromContext(ctx).OrganizationID {
 		return errors.New("channel not found")
 	}
 	c.TokenStatus = status
@@ -1714,11 +1903,15 @@ func (m *InMemoryStore) UpdateChannelTokenStatus(ctx context.Context, id string,
 }
 
 func (m *InMemoryStore) UpdateChannelRateLimit(ctx context.Context, id string, usage domain.RateLimitUsage) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	c, ok := m.channels[id]
-	if !ok {
+	if !ok || c.OrganizationID != TenantFromContext(ctx).OrganizationID {
 		return errors.New("channel not found")
 	}
 	c.RateLimitCallCount = usage.CallCount
@@ -1729,15 +1922,24 @@ func (m *InMemoryStore) UpdateChannelRateLimit(ctx context.Context, id string, u
 }
 
 func (m *InMemoryStore) CreatePost(ctx context.Context, post *domain.Post) (*domain.Post, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if post.OrganizationID != "" && post.OrganizationID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
+	if _, err := m.GetChannelByID(ctx, post.ChannelID); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	tc := TenantFromContext(ctx)
 	if post.OrganizationID == "" {
 		post.OrganizationID = tc.OrganizationID
-	}
-	if post.OrganizationID == "" {
-		post.OrganizationID = domain.DefaultOrganizationID
 	}
 	if post.CreatedBy == "" {
 		post.CreatedBy = tc.UserID
@@ -1764,6 +1966,10 @@ func (m *InMemoryStore) CreatePost(ctx context.Context, post *domain.Post) (*dom
 }
 
 func (m *InMemoryStore) GetPostByID(ctx context.Context, id string) (*domain.Post, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -1786,6 +1992,10 @@ func (m *InMemoryStore) GetPostByID(ctx context.Context, id string) (*domain.Pos
 }
 
 func (m *InMemoryStore) ListPosts(ctx context.Context, statusFilter string, limit int) ([]domain.Post, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -1819,11 +2029,18 @@ func (m *InMemoryStore) ListPosts(ctx context.Context, statusFilter string, limi
 
 // ClaimDuePosts implements Tenant-Fair Scheduling for InMemoryStore.
 func (m *InMemoryStore) ClaimDuePosts(ctx context.Context, now time.Time, batchSize int) ([]domain.Post, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	byOrg := make(map[string][]*domain.Post)
 	for _, p := range m.posts {
+		if p.OrganizationID != TenantFromContext(ctx).OrganizationID {
+			continue
+		}
 		isDueScheduled := p.Status == domain.PostStatusScheduled && !p.ScheduledAt.After(now)
 		isDueRetry := p.Status == domain.PostStatusFailed && p.RetryCount < p.MaxRetries && p.NextRetryAt != nil && !p.NextRetryAt.After(now)
 		if isDueScheduled || isDueRetry {
@@ -1866,11 +2083,15 @@ func (m *InMemoryStore) ClaimDuePosts(ctx context.Context, now time.Time, batchS
 }
 
 func (m *InMemoryStore) MarkPostProcessing(ctx context.Context, postID string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	p, ok := m.posts[postID]
-	if !ok {
+	if !ok || p.OrganizationID != TenantFromContext(ctx).OrganizationID {
 		return errors.New("post not found")
 	}
 	p.Status = domain.PostStatusProcessing
@@ -1879,11 +2100,15 @@ func (m *InMemoryStore) MarkPostProcessing(ctx context.Context, postID string) e
 }
 
 func (m *InMemoryStore) MarkPostPublished(ctx context.Context, postID string, externalPostID string, publishedAt time.Time) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	p, ok := m.posts[postID]
-	if !ok {
+	if !ok || p.OrganizationID != TenantFromContext(ctx).OrganizationID {
 		return errors.New("post not found")
 	}
 	p.Status = domain.PostStatusPublished
@@ -1896,11 +2121,15 @@ func (m *InMemoryStore) MarkPostPublished(ctx context.Context, postID string, ex
 }
 
 func (m *InMemoryStore) MarkPostFailedOrRetry(ctx context.Context, postID string, retryCount int, nextRetryAt *time.Time, finalStatus string, errCode int, errMsg string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	p, ok := m.posts[postID]
-	if !ok {
+	if !ok || p.OrganizationID != TenantFromContext(ctx).OrganizationID {
 		return errors.New("post not found")
 	}
 	p.Status = finalStatus
@@ -1913,11 +2142,15 @@ func (m *InMemoryStore) MarkPostFailedOrRetry(ctx context.Context, postID string
 }
 
 func (m *InMemoryStore) CancelPost(ctx context.Context, postID string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	p, ok := m.posts[postID]
-	if !ok {
+	if !ok || p.OrganizationID != TenantFromContext(ctx).OrganizationID {
 		return errors.New("post not found")
 	}
 	tc := TenantFromContext(ctx)
@@ -2188,14 +2421,19 @@ func (m *InMemoryStore) AcceptInvitation(ctx context.Context, token string, user
 // ----------------------------------------------------------------------------
 
 func (m *InMemoryStore) CreateChannelGroup(ctx context.Context, g *domain.ChannelGroup) (*domain.ChannelGroup, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if g.OrganizationID != "" && g.OrganizationID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if g.OrganizationID == "" {
 		g.OrganizationID = TenantFromContext(ctx).OrganizationID
-	}
-	if g.OrganizationID == "" {
-		g.OrganizationID = domain.DefaultOrganizationID
 	}
 	if g.ID == "" {
 		g.ID = newUUID()
@@ -2209,6 +2447,14 @@ func (m *InMemoryStore) CreateChannelGroup(ctx context.Context, g *domain.Channe
 }
 
 func (m *InMemoryStore) ListChannelGroups(ctx context.Context, orgID string) ([]domain.ChannelGroup, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -2234,6 +2480,14 @@ func (m *InMemoryStore) ListChannelGroups(ctx context.Context, orgID string) ([]
 }
 
 func (m *InMemoryStore) GetChannelGroupByID(ctx context.Context, orgID string, groupID string) (*domain.ChannelGroup, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -2262,6 +2516,14 @@ func (m *InMemoryStore) GetChannelGroupByID(ctx context.Context, orgID string, g
 }
 
 func (m *InMemoryStore) DeleteChannelGroup(ctx context.Context, orgID string, groupID string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -2280,6 +2542,14 @@ func (m *InMemoryStore) DeleteChannelGroup(ctx context.Context, orgID string, gr
 }
 
 func (m *InMemoryStore) SetChannelGroupChannels(ctx context.Context, orgID string, groupID string, channelIDs []string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -2287,11 +2557,38 @@ func (m *InMemoryStore) SetChannelGroupChannels(ctx context.Context, orgID strin
 	if !ok || g.OrganizationID != orgID {
 		return errors.New("channel group not found")
 	}
+	for _, id := range channelIDs {
+		ch, ok := m.channels[id]
+		if !ok || ch.OrganizationID != orgID {
+			return errors.New("channel not found")
+		}
+	}
 	m.channelGroupItems[groupID] = append([]string(nil), channelIDs...)
 	return nil
 }
 
 func (m *InMemoryStore) SetChannelGroupPermission(ctx context.Context, p *domain.ChannelGroupPermission) (*domain.ChannelGroupPermission, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
+	if _, err := m.GetChannelGroupByID(ctx, TenantFromContext(ctx).OrganizationID, p.ChannelGroupID); err != nil {
+		return nil, err
+	}
+	members, err := m.ListOrganizationMembers(ctx, TenantFromContext(ctx).OrganizationID)
+	if err != nil {
+		return nil, err
+	}
+	found := false
+	for _, member := range members {
+		if member.UserID == p.UserID {
+			found = true
+		}
+	}
+	if !found {
+		return nil, errors.New("user does not belong to organization")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -2324,6 +2621,14 @@ func (m *InMemoryStore) SetChannelGroupPermission(ctx context.Context, p *domain
 }
 
 func (m *InMemoryStore) DeleteChannelGroupPermission(ctx context.Context, orgID string, groupID string, memberID string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -2342,6 +2647,14 @@ func (m *InMemoryStore) DeleteChannelGroupPermission(ctx context.Context, orgID 
 }
 
 func (m *InMemoryStore) ListChannelGroupPermissions(ctx context.Context, orgID string, groupID string) ([]domain.ChannelGroupPermission, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -2365,6 +2678,14 @@ func (m *InMemoryStore) ListChannelGroupPermissions(ctx context.Context, orgID s
 }
 
 func (m *InMemoryStore) GetUserChannelRoles(ctx context.Context, orgID string, userID string, channelID string) ([]domain.GroupRole, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if orgID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -2399,6 +2720,10 @@ func (m *InMemoryStore) GetUserChannelRoles(ctx context.Context, orgID string, u
 // ----------------------------------------------------------------------------
 
 func (m *InMemoryStore) ReviewPost(ctx context.Context, postID string, reviewerID string, action domain.ApprovalAction, feedbackNote string) (*domain.Post, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -2446,6 +2771,10 @@ func (m *InMemoryStore) ReviewPost(ctx context.Context, postID string, reviewerI
 }
 
 func (m *InMemoryStore) ResubmitPost(ctx context.Context, postID string, content string, scheduledAt time.Time) (*domain.Post, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -2480,6 +2809,13 @@ func (m *InMemoryStore) ResubmitPost(ctx context.Context, postID string, content
 }
 
 func (m *InMemoryStore) ListPostApprovals(ctx context.Context, postID string) ([]domain.PostApproval, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if _, err := m.GetPostByID(ctx, postID); err != nil {
+		return nil, err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -2507,9 +2843,6 @@ func (m *InMemoryStore) InsertAuditLog(ctx context.Context, log *domain.AuditLog
 
 	if log.OrganizationID == "" {
 		log.OrganizationID = TenantFromContext(ctx).OrganizationID
-	}
-	if log.OrganizationID == "" {
-		log.OrganizationID = domain.DefaultOrganizationID
 	}
 	if log.ID == "" {
 		log.ID = newUUID()
@@ -2539,6 +2872,13 @@ func (m *InMemoryStore) ListAuditLogs(ctx context.Context, orgID string, limit i
 }
 
 func (m *InMemoryStore) InsertPublishLog(ctx context.Context, l *domain.PublishLog) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	if _, err := m.GetPostByID(ctx, l.PostID); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -2551,6 +2891,13 @@ func (m *InMemoryStore) InsertPublishLog(ctx context.Context, l *domain.PublishL
 }
 
 func (m *InMemoryStore) ListPublishLogsByPost(ctx context.Context, postID string) ([]domain.PublishLog, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if _, err := m.GetPostByID(ctx, postID); err != nil {
+		return nil, err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -2558,14 +2905,19 @@ func (m *InMemoryStore) ListPublishLogsByPost(ctx context.Context, postID string
 }
 
 func (m *InMemoryStore) CreateMediaAsset(ctx context.Context, asset *domain.MediaAsset) (*domain.MediaAsset, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+	if asset.OrganizationID != "" && asset.OrganizationID != TenantFromContext(ctx).OrganizationID {
+		err := errors.New("organization mismatch")
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if asset.OrganizationID == "" {
 		asset.OrganizationID = TenantFromContext(ctx).OrganizationID
-	}
-	if asset.OrganizationID == "" {
-		asset.OrganizationID = domain.DefaultOrganizationID
 	}
 	if asset.ID == "" {
 		asset.ID = newUUID()
@@ -2577,6 +2929,10 @@ func (m *InMemoryStore) CreateMediaAsset(ctx context.Context, asset *domain.Medi
 }
 
 func (m *InMemoryStore) GetSystemStats(ctx context.Context) (*domain.SystemStats, error) {
+	if err := requireOrganization(ctx); err != nil {
+		return nil, err
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -2610,4 +2966,69 @@ func (m *InMemoryStore) GetSystemStats(ctx context.Context) (*domain.SystemStats
 		}
 	}
 	return stats, nil
+}
+
+func requireOrganization(ctx context.Context) error {
+	if TenantFromContext(ctx).OrganizationID == "" {
+		return errors.New("organization context required")
+	}
+	return nil
+}
+func affected(res sql.Result, err error) error {
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return errors.New("entity unavailable or state conflict")
+	}
+	return nil
+}
+func (s *PostgresStore) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
+func (m *InMemoryStore) Ping(ctx context.Context) error { return nil }
+func (s *PostgresStore) ListOrganizationsForWorker(ctx context.Context) ([]domain.Organization, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT id::text,name,slug FROM organizations ORDER BY id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Organization
+	for rows.Next() {
+		var o domain.Organization
+		if err := rows.Scan(&o.ID, &o.Name, &o.Slug); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+func (m *InMemoryStore) ListOrganizationsForWorker(ctx context.Context) ([]domain.Organization, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []domain.Organization
+	for _, o := range m.organizations {
+		out = append(out, *o)
+	}
+	return out, nil
+}
+func (s *PostgresStore) ClaimLegacyWorkspace(ctx context.Context, userID string) error {
+	res, err := s.db.ExecContext(ctx, "UPDATE organization_members SET user_id=$1,updated_at=NOW() WHERE organization_id=$2 AND user_id=$3 AND org_role='OWNER'", userID, domain.DefaultOrganizationID, domain.DefaultUserID)
+	return affected(res, err)
+}
+func (m *InMemoryStore) ClaimLegacyWorkspace(ctx context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.users[userID]; !ok {
+		return errors.New("user not found")
+	}
+	for _, member := range m.members {
+		if member.OrganizationID == domain.DefaultOrganizationID && member.UserID == domain.DefaultUserID && member.OrgRole == domain.OrgRoleOwner {
+			member.UserID = userID
+			return nil
+		}
+	}
+	return errors.New("legacy workspace already claimed")
 }

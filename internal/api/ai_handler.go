@@ -19,7 +19,7 @@ func (s *Server) handleAIGenerateContent(w http.ResponseWriter, r *http.Request)
 
 	content, modelUsed, err := s.aiGen.GeneratePostContent(r.Context(), req.Topic, req.Tone)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
 		return
 	}
 
@@ -30,4 +30,3 @@ func (s *Server) handleAIGenerateContent(w http.ResponseWriter, r *http.Request)
 		"generated_content": content,
 	})
 }
-

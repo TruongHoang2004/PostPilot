@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { AuthGate } from "@/components/AuthGate";
 import { Header, NavigationTab } from "@/components/Header";
 import { StatsCards } from "@/components/StatsCards";
 import { PostComposer } from "@/components/PostComposer";
@@ -17,7 +18,7 @@ import { Flag, ArrowRight, Clock, ShieldCheck } from "lucide-react";
 
 export default function Home() {
   const { alert, toast } = useDialog();
-  const { currentOrg } = useOrg();
+  const { currentOrg, loading: identityLoading } = useOrg();
   const [activeTab, setActiveTab] = useState<NavigationTab>("studio");
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [stats, setStats] = useState<SystemStats | null>(null);
@@ -27,6 +28,7 @@ export default function Home() {
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
 
   const fetchAllData = useCallback(async () => {
+    if (!currentOrg) { setChannels([]); setPosts([]); setStats(null); return; }
     try {
       const [healthData, statsData, channelsData, postsData] = await Promise.allSettled([
         api.getHealth(),
@@ -44,7 +46,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentOrg]);
 
   // Fetch when workspace/org changes
   useEffect(() => {
@@ -80,6 +82,9 @@ export default function Home() {
     }, 5000);
     return () => clearInterval(interval);
   }, [autoRefresh, fetchAllData]);
+
+  if (identityLoading) return <main className="min-h-screen flex items-center justify-center">Đang xác minh tài khoản…</main>;
+  if (!currentOrg) return <AuthGate />;
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-[#090d16] text-slate-800 dark:text-slate-100 transition-colors duration-200">

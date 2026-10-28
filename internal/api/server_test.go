@@ -17,11 +17,11 @@ import (
 	"github.com/TruongHoang2004/PostPilot/internal/crypto"
 	"github.com/TruongHoang2004/PostPilot/internal/database"
 	"github.com/TruongHoang2004/PostPilot/internal/domain"
-	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/ai"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/storage"
+	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 	"github.com/TruongHoang2004/PostPilot/internal/worker"
 )
 
@@ -244,7 +244,9 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	reqListChB.Header.Set("Authorization", "Bearer "+tokenB)
 	recListChB := httptest.NewRecorder()
 	handler.ServeHTTP(recListChB, reqListChB)
-	var listChB struct{ Channels []domain.Channel `json:"channels"` }
+	var listChB struct {
+		Channels []domain.Channel `json:"channels"`
+	}
 	_ = json.Unmarshal(recListChB.Body.Bytes(), &listChB)
 	for _, c := range listChB.Channels {
 		if c.ID == chA.ID {
@@ -256,7 +258,9 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	reqListPoB.Header.Set("Authorization", "Bearer "+tokenB)
 	recListPoB := httptest.NewRecorder()
 	handler.ServeHTTP(recListPoB, reqListPoB)
-	var listPoB struct{ Posts []domain.Post `json:"posts"` }
+	var listPoB struct {
+		Posts []domain.Post `json:"posts"`
+	}
 	_ = json.Unmarshal(recListPoB.Body.Bytes(), &listPoB)
 	for _, p := range listPoB.Posts {
 		if p.ID == poA.ID {
@@ -297,12 +301,12 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	// Setup approval required channel in default tenant
 	ctx := domain.WithTenantContext(t.Context(), domain.DefaultTenantContext())
 	chRbac, _ := store.UpsertChannel(ctx, &domain.Channel{
-		Platform: domain.PlatformFacebook,
-		ExternalID: "fb-rbac-ch",
-		Name: "Approval Required Channel",
+		Platform:             domain.PlatformFacebook,
+		ExternalID:           "fb-rbac-ch",
+		Name:                 "Approval Required Channel",
 		EncryptedAccessToken: "token",
-		TokenStatus: domain.TokenStatusActive,
-		IsActive: true,
+		TokenStatus:          domain.TokenStatusActive,
+		IsActive:             true,
 	})
 	cgRbac, _ := store.CreateChannelGroup(ctx, &domain.ChannelGroup{Name: "Strict Approvals", RequireApproval: true})
 	_ = store.SetChannelGroupChannels(ctx, domain.DefaultOrganizationID, cgRbac.ID, []string{chRbac.ID})
@@ -392,12 +396,12 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 
 	// Batch Fan-Out and Batch Approval via batch_id
 	chRbac2, _ := store.UpsertChannel(ctx, &domain.Channel{
-		Platform: domain.PlatformFacebook,
-		ExternalID: "fb-rbac-ch-2",
-		Name: "Approval Channel 2",
+		Platform:             domain.PlatformFacebook,
+		ExternalID:           "fb-rbac-ch-2",
+		Name:                 "Approval Channel 2",
 		EncryptedAccessToken: "token2",
-		TokenStatus: domain.TokenStatusActive,
-		IsActive: true,
+		TokenStatus:          domain.TokenStatusActive,
+		IsActive:             true,
 	})
 	_ = store.SetChannelGroupChannels(ctx, domain.DefaultOrganizationID, cgRbac.ID, []string{chRbac.ID, chRbac2.ID})
 
@@ -442,4 +446,3 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 		t.Fatalf("expected 200 for legacy request without tenant header, got %d", recLegacy.Code)
 	}
 }
-

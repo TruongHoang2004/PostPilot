@@ -12,142 +12,52 @@ import (
 	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
 
-// tenantMiddleware extracts and attaches tenant and identity context to incoming requests.
+// tenantMiddleware requires an authenticated, active user and current organization membership.
 func (s *Server) tenantMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Bypass tenant extraction for CORS preflight
-		if r.Method == http.MethodOptions {
+		public := r.Method == http.MethodOptions || (r.Method == http.MethodPost && (r.URL.Path == "/api/v1/auth/login" || r.URL.Path == "/api/v1/auth/register")) || (r.Method == http.MethodGet && (r.URL.Path == "/healthz" || r.URL.Path == "/api/v1/auth/facebook/callback")) || r.URL.Path == "/api/v1/webhooks/facebook"
+		if public {
 			next.ServeHTTP(w, r)
 			return
 		}
-
-		var tc *domain.TenantContext
-
-		// 1. Check Authorization: Bearer <jwt_token>
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenStr := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-			if tokenStr != "" {
-				claims, err := crypto.VerifyJWT(tokenStr, s.cfg.APIAdminKey)
-				if err != nil {
-					writeJSON(w, http.StatusUnauthorized, map[string]any{
-						"error": "invalid or expired authorization token: " + err.Error(),
-					})
-					return
-				}
-
-				targetOrgID := claims.OrganizationID
-				if reqOrg := r.Header.Get("X-Organization-Id"); reqOrg != "" {
-					targetOrgID = reqOrg
-				} else if queryOrg := r.URL.Query().Get("org_id"); queryOrg != "" {
-					targetOrgID = queryOrg
-				}
-
-				userOrgRole := domain.OrgRole(claims.OrgRole)
-				if userOrgRole == "" {
-					userOrgRole = domain.OrgRoleMember
-				}
-
-				// If requesting a different org than claims, verify membership
-				if targetOrgID != "" && targetOrgID != claims.OrganizationID {
-					members, err := s.store.ListOrganizationMembers(r.Context(), targetOrgID)
-					if err != nil {
-						writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to verify organization membership"})
-						return
-					}
-					found := false
-					for _, m := range members {
-						if m.UserID == claims.UserID {
-							found = true
-							userOrgRole = m.OrgRole
-							break
-						}
-					}
-					if !found {
-						writeJSON(w, http.StatusForbidden, map[string]any{"error": "user does not belong to requested organization"})
-						return
-					}
-				}
-
-				if targetOrgID == "" {
-					targetOrgID = domain.DefaultOrganizationID
-				}
-
-				tc = &domain.TenantContext{
-					UserID:             claims.UserID,
-					UserEmail:          claims.Email,
-					OrganizationID:     targetOrgID,
-					OrgRole:            userOrgRole,
-					ChannelPermissions: make(map[string]domain.GroupRole),
-				}
-			}
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") {
+			writeJSON(w, 401, map[string]any{"error": "authentication required"})
+			return
 		}
-
-		// 2. Fallback to X-Admin-Key if no JWT
-		if tc == nil {
-			adminKey := r.Header.Get("X-Admin-Key")
-			if adminKey != "" && s.cfg.APIAdminKey != "" && adminKey == s.cfg.APIAdminKey {
-				targetOrgID := domain.DefaultOrganizationID
-				if reqOrg := r.Header.Get("X-Organization-Id"); reqOrg != "" {
-					targetOrgID = reqOrg
-				} else if queryOrg := r.URL.Query().Get("org_id"); queryOrg != "" {
-					targetOrgID = queryOrg
-				}
-				tc = &domain.TenantContext{
-					UserID:             domain.DefaultUserID,
-					UserEmail:          "admin@postpilot.local",
-					OrganizationID:     targetOrgID,
-					OrgRole:            domain.OrgRoleOwner,
-					ChannelPermissions: make(map[string]domain.GroupRole),
-				}
-			}
+		claims, err := crypto.VerifyJWT(strings.TrimSpace(strings.TrimPrefix(auth, "Bearer ")), s.cfg.APIAdminKey)
+		if err != nil || claims.UserID == "" {
+			writeJSON(w, 401, map[string]any{"error": "invalid or expired authorization token"})
+			return
 		}
-
-		// 3. Fallback to DefaultTenantContext if neither JWT nor Admin-Key
-		if tc == nil {
-			reqOrg := strings.TrimSpace(r.Header.Get("X-Organization-Id"))
-			queryOrg := strings.TrimSpace(r.URL.Query().Get("org_id"))
-			if reqOrg != "" && reqOrg != domain.DefaultOrganizationID {
-				writeJSON(w, http.StatusUnauthorized, map[string]any{
-					"error": "authentication required to access organization",
-				})
+		user, err := s.store.GetUserByID(r.Context(), claims.UserID)
+		if err != nil || user == nil || !user.IsActive {
+			writeJSON(w, 401, map[string]any{"error": "account unavailable"})
+			return
+		}
+		orgID := claims.OrganizationID
+		if v := r.Header.Get("X-Organization-Id"); v != "" {
+			orgID = v
+		} else if v := r.URL.Query().Get("org_id"); v != "" {
+			orgID = v
+		}
+		if orgID == "" {
+			writeJSON(w, 403, map[string]any{"error": "organization membership required"})
+			return
+		}
+		members, err := s.store.ListOrganizationMembers(r.Context(), orgID)
+		if err != nil {
+			writeJSON(w, 503, map[string]any{"error": "unable to verify organization membership"})
+			return
+		}
+		for _, member := range members {
+			if member.UserID == user.ID {
+				tc := &domain.TenantContext{UserID: user.ID, UserEmail: user.Email, OrganizationID: orgID, OrgRole: member.OrgRole, ChannelPermissions: make(map[string]domain.GroupRole)}
+				next.ServeHTTP(w, r.WithContext(domain.WithTenantContext(r.Context(), tc)))
 				return
 			}
-			if queryOrg != "" && queryOrg != domain.DefaultOrganizationID {
-				writeJSON(w, http.StatusUnauthorized, map[string]any{
-					"error": "authentication required to access organization",
-				})
-				return
-			}
-
-			tc = domain.DefaultTenantContext()
-			tc.ChannelPermissions = make(map[string]domain.GroupRole)
 		}
-
-		// 4. Handle X-Simulate-Role and X-User-Id for testing/simulation
-		if simRole := strings.TrimSpace(r.Header.Get("X-Simulate-Role")); simRole != "" {
-			upperRole := strings.ToUpper(simRole)
-			switch upperRole {
-			case "OWNER":
-				tc.OrgRole = domain.OrgRoleOwner
-			case "ADMIN":
-				tc.OrgRole = domain.OrgRoleAdmin
-			case "MEMBER":
-				tc.OrgRole = domain.OrgRoleMember
-			case "MANAGER", "APPROVER", "EDITOR", "VIEWER":
-				tc.OrgRole = domain.OrgRoleMember
-				if tc.ChannelPermissions == nil {
-					tc.ChannelPermissions = make(map[string]domain.GroupRole)
-				}
-				tc.ChannelPermissions["*"] = domain.GroupRole(upperRole)
-			}
-		}
-		if simUserID := strings.TrimSpace(r.Header.Get("X-User-Id")); simUserID != "" {
-			tc.UserID = simUserID
-		}
-
-		ctx := domain.WithTenantContext(r.Context(), tc)
-		next.ServeHTTP(w, r.WithContext(ctx))
+		writeJSON(w, 403, map[string]any{"error": "user does not belong to requested organization"})
 	})
 }
 
@@ -163,9 +73,6 @@ func (s *Server) resolveChannelPermission(ctx context.Context, channelID string)
 	if tc.ChannelPermissions != nil {
 		if role, ok := tc.ChannelPermissions[channelID]; ok && role != "" {
 			return role, true
-		}
-		if wildcardRole, ok := tc.ChannelPermissions["*"]; ok && wildcardRole != "" {
-			return wildcardRole, true
 		}
 	}
 	roles, err := s.store.GetUserChannelRoles(ctx, tc.OrganizationID, tc.UserID, channelID)

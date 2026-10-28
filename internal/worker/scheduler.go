@@ -10,9 +10,9 @@ import (
 	"github.com/TruongHoang2004/PostPilot/internal/crypto"
 	"github.com/TruongHoang2004/PostPilot/internal/database"
 	"github.com/TruongHoang2004/PostPilot/internal/domain"
-	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
+	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 )
 
 // Scheduler is responsible for:
@@ -88,6 +88,19 @@ func (s *Scheduler) runDuePostScanner(ctx context.Context) {
 
 // ScanAndEnqueueDuePosts executes a single polling cycle claiming due posts and enqueuing them into Redis.
 func (s *Scheduler) ScanAndEnqueueDuePosts(ctx context.Context) int {
+	orgs, err := s.store.ListOrganizationsForWorker(ctx)
+	if err != nil {
+		s.logger.Error("Cannot list workspaces", "error", err)
+		return 0
+	}
+	total := 0
+	for _, org := range orgs {
+		scoped := domain.WithTenantContext(ctx, &domain.TenantContext{OrganizationID: org.ID})
+		total += s.scanOrganization(scoped)
+	}
+	return total
+}
+func (s *Scheduler) scanOrganization(ctx context.Context) int {
 	now := time.Now().UTC()
 	claimedPosts, err := s.store.ClaimDuePosts(ctx, now, 50)
 	if err != nil {
@@ -98,11 +111,12 @@ func (s *Scheduler) ScanAndEnqueueDuePosts(ctx context.Context) int {
 	enqueued := 0
 	for _, p := range claimedPosts {
 		payload := domain.PublishJobPayload{
-			PostID:     p.ID,
-			ChannelID:  p.ChannelID,
-			QueueTier:  p.QueueTier,
-			Attempt:    p.RetryCount + 1,
-			EnqueuedAt: now,
+			OrganizationID: p.OrganizationID,
+			PostID:         p.ID,
+			ChannelID:      p.ChannelID,
+			QueueTier:      p.QueueTier,
+			Attempt:        p.RetryCount + 1,
+			EnqueuedAt:     now,
 		}
 		if err := s.redis.EnqueuePublishJob(ctx, payload); err != nil {
 			s.logger.Error("Failed to enqueue job to Redis, reverting post to retry", "post_id", p.ID, "error", err)
@@ -133,6 +147,15 @@ func (s *Scheduler) runTokenHealthChecker(ctx context.Context) {
 
 // CheckAllChannelTokens verifies token health for all active channels on their respective platforms.
 func (s *Scheduler) CheckAllChannelTokens(ctx context.Context) {
+	orgs, err := s.store.ListOrganizationsForWorker(ctx)
+	if err != nil {
+		return
+	}
+	for _, org := range orgs {
+		s.checkOrganizationTokens(domain.WithTenantContext(ctx, &domain.TenantContext{OrganizationID: org.ID}))
+	}
+}
+func (s *Scheduler) checkOrganizationTokens(ctx context.Context) {
 	channels, err := s.store.ListChannels(ctx)
 	if err != nil {
 		s.logger.Error("Token health check failed to list channels", "error", err)

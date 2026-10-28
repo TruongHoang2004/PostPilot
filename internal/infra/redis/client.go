@@ -38,7 +38,7 @@ type Client struct {
 	memKV             map[string]string
 }
 
-// NewClient initializes a Redis client and verifies connection with a PING.
+// NewClient creates a real Redis client. Callers must verify connectivity before serving work.
 func NewClient(addr, password string, db int) *Client {
 	c := &Client{
 		addr:     addr,
@@ -46,9 +46,6 @@ func NewClient(addr, password string, db int) *Client {
 		db:       db,
 		memLists: make(map[string][]string),
 		memKV:    make(map[string]string),
-	}
-	if err := c.Ping(context.Background()); err != nil {
-		c.useMemoryFallback = true
 	}
 	return c
 }

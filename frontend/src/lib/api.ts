@@ -26,7 +26,6 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 export const STORAGE_KEYS = {
   TOKEN: "postpilot_auth_token",
   ORG: "postpilot_organization_id",
-  SIM_ROLE: "postpilot_simulate_role",
 };
 
 function getHeaders(customHeaders?: HeadersInit): Headers {
@@ -40,16 +39,16 @@ function getHeaders(customHeaders?: HeadersInit): Headers {
     if (orgId && !headers.has("X-Organization-Id")) {
       headers.set("X-Organization-Id", orgId);
     }
-    const simRole = localStorage.getItem(STORAGE_KEYS.SIM_ROLE);
-    if (simRole && !headers.has("X-Simulate-Role")) {
-      headers.set("X-Simulate-Role", simRole);
-    }
+
   }
   return headers;
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined" && !res.url.endsWith("/auth/login")) {
+      api.clearAuth(); window.dispatchEvent(new Event("postpilot-session-expired"));
+    }
     let errorMsg = `HTTP Error ${res.status}`;
     try {
       const data = await res.json();
@@ -92,25 +91,11 @@ export const api = {
     }
   },
 
-  getSimulateRole(): string | null {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem(STORAGE_KEYS.SIM_ROLE);
-  },
-
-  setSimulateRole(role: string | null) {
-    if (typeof window === "undefined") return;
-    if (role) {
-      localStorage.setItem(STORAGE_KEYS.SIM_ROLE, role);
-    } else {
-      localStorage.removeItem(STORAGE_KEYS.SIM_ROLE);
-    }
-  },
-
   clearAuth() {
     if (typeof window === "undefined") return;
     localStorage.removeItem(STORAGE_KEYS.TOKEN);
     localStorage.removeItem(STORAGE_KEYS.ORG);
-    localStorage.removeItem(STORAGE_KEYS.SIM_ROLE);
+    localStorage.removeItem("postpilot_simulate_role");
   },
 
   // 1. Health & Stats
@@ -170,12 +155,17 @@ export const api = {
     return data;
   },
 
-  async getMe(): Promise<{ user: User; organization: Organization; member?: OrganizationMember }> {
+  async getMe(): Promise<{ user: User; organization: Organization; member?: OrganizationMember; channel_roles?: Record<string, GroupRole> }> {
     const res = await fetch(`${API_BASE}/api/v1/auth/me`, {
       cache: "no-store",
       headers: getHeaders(),
     });
-    return handleResponse<{ user: User; organization: Organization; member?: OrganizationMember }>(res);
+    return handleResponse<{ user: User; organization: Organization; member?: OrganizationMember; channel_roles?: Record<string, GroupRole> }>(res);
+  },
+
+  async claimLegacyWorkspace(adminKey: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/api/v1/auth/claim-legacy-workspace`, { method: "POST", headers: getHeaders({"X-Admin-Key": adminKey}) });
+    await handleResponse(res);
   },
 
   // 3. Organization Workspace Management
@@ -210,13 +200,13 @@ export const api = {
     orgId: string,
     email: string,
     role: OrgRole
-  ): Promise<{ message: string; member?: OrganizationMember; invitation?: OrganizationInvitation; token?: string }> {
+  ): Promise<{ message: string; member?: OrganizationMember; channel_roles?: Record<string, GroupRole>; invitation?: OrganizationInvitation; token?: string }> {
     const res = await fetch(`${API_BASE}/api/v1/organizations/${orgId}/members`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ email, role }),
     });
-    return handleResponse<{ message: string; member?: OrganizationMember; invitation?: OrganizationInvitation; token?: string }>(res);
+    return handleResponse<{ message: string; member?: OrganizationMember; channel_roles?: Record<string, GroupRole>; invitation?: OrganizationInvitation; token?: string }>(res);
   },
 
   async removeOrgMember(orgId: string, memberId: string): Promise<{ message: string }> {
@@ -470,8 +460,6 @@ export const api = {
         if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
         const orgId = localStorage.getItem(STORAGE_KEYS.ORG);
         if (orgId) xhr.setRequestHeader("X-Organization-Id", orgId);
-        const simRole = localStorage.getItem(STORAGE_KEYS.SIM_ROLE);
-        if (simRole) xhr.setRequestHeader("X-Simulate-Role", simRole);
       }
 
       if (onProgress) {

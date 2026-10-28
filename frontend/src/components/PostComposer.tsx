@@ -31,7 +31,7 @@ interface PostComposerProps {
 
 export function PostComposer({ channels, onSuccess }: PostComposerProps) {
   const { confirm, alert, toast } = useDialog();
-  const { channelGroups, canCreatePost, canPublishDirectly, currentRole } = useOrg();
+  const { channelGroups, canCreatePost, canPublishDirectly, currentRole, channelRoles, canManageOrg } = useOrg();
 
   // Target selection: SINGLE CHANNEL vs CHANNEL GROUP
   const [targetType, setTargetType] = useState<"CHANNEL" | "GROUP">("CHANNEL");
@@ -89,8 +89,9 @@ export function PostComposer({ channels, onSuccess }: PostComposerProps) {
   const isGroupRequiringApproval = Boolean(selectedGroup?.require_approval);
 
   // RBAC checks for action buttons
-  const isEditorOnApprovalGroup =
-    targetType === "GROUP" && isGroupRequiringApproval && currentRole.toUpperCase() === "EDITOR";
+  const targetChannels = targetType === "GROUP" ? selectedGroup?.channels || [] : channels.filter(c => c.id === selectedChannelID);
+  const isEditorOnApprovalGroup = !canManageOrg && targetChannels.some(ch => channelRoles[ch.id] === "EDITOR") &&
+    (isGroupRequiringApproval || targetChannels.some(ch => channelGroups.some(g => g.require_approval && g.channels?.some(c => c.id === ch.id))));
 
   // AI Generate Handler
   const handleGenerateAI = async () => {
@@ -282,7 +283,7 @@ export function PostComposer({ channels, onSuccess }: PostComposerProps) {
       if (submitForApproval || isEditorOnApprovalGroup) {
         toast("📬 Đã gửi bài viết vào Hộp Thư Phê Duyệt!", "success");
       } else if (publishNow) {
-        toast("🚀 Đã kích hoạt đăng bài thành công lên Facebook!", "success");
+        toast("Đã đưa bài vào hàng đợi. Xem trạng thái thực tế trong Lịch trình & Hàng đợi.", "success");
       } else {
         toast("📅 Đã lưu lịch hẹn đăng bài tự động!", "success");
       }

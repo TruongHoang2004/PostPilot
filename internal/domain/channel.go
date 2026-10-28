@@ -23,7 +23,7 @@ func NormalizePlatform(p PlatformType) PlatformType {
 // IsValidPlatform verifies if the platform identifier is within supported platforms.
 func IsValidPlatform(p PlatformType) bool {
 	switch p {
-	case PlatformFacebook, PlatformLinkedIn, PlatformTwitter, PlatformTikTok:
+	case PlatformFacebook:
 		return true
 	default:
 		return false

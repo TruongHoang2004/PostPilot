@@ -58,7 +58,7 @@ func (s *Server) handleUpsertChannel(w http.ResponseWriter, r *http.Request) {
 	platform := domain.NormalizePlatform(domain.PlatformType(strings.ToUpper(strings.TrimSpace(req.Platform))))
 	if !domain.IsValidPlatform(platform) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
-			"error": "Invalid platform. Supported platforms: FACEBOOK, LINKEDIN, TWITTER, TIKTOK",
+			"error": "Invalid platform. Supported platform: FACEBOOK",
 		})
 		return
 	}
@@ -199,4 +199,3 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 		"channel_id": channelID,
 	})
 }
-

@@ -172,11 +172,12 @@ type PublishLog struct {
 
 // PublishJobPayload is the JSON message enqueued in Redis for worker processing.
 type PublishJobPayload struct {
-	PostID     string    `json:"post_id"`
-	ChannelID  string    `json:"channel_id"`
-	QueueTier  string    `json:"queue_tier"`
-	Attempt    int       `json:"attempt"`
-	EnqueuedAt time.Time `json:"enqueued_at"`
+	OrganizationID string    `json:"organization_id"`
+	PostID         string    `json:"post_id"`
+	ChannelID      string    `json:"channel_id"`
+	QueueTier      string    `json:"queue_tier"`
+	Attempt        int       `json:"attempt"`
+	EnqueuedAt     time.Time `json:"enqueued_at"`
 }
 
 // SystemStats aggregates high-level dashboard metrics.

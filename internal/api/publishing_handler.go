@@ -201,11 +201,12 @@ func (s *Server) handleCreatePost(w http.ResponseWriter, r *http.Request) {
 
 		if publishNow && post.Status == domain.PostStatusQueued {
 			payload := domain.PublishJobPayload{
-				PostID:     post.ID,
-				ChannelID:  post.ChannelID,
-				QueueTier:  post.QueueTier,
-				Attempt:    1,
-				EnqueuedAt: time.Now().UTC(),
+				OrganizationID: post.OrganizationID,
+				PostID:         post.ID,
+				ChannelID:      post.ChannelID,
+				QueueTier:      post.QueueTier,
+				Attempt:        1,
+				EnqueuedAt:     time.Now().UTC(),
 			}
 			if err := s.redis.EnqueuePublishJob(ctx, payload); err != nil {
 				s.logger.Error("Failed to enqueue publish_now job to redis", "post_id", post.ID, "error", err)
@@ -336,11 +337,12 @@ func (s *Server) handleReviewPost(w http.ResponseWriter, r *http.Request) {
 	// If approved and queued, enqueue to Redis
 	if action == domain.ApprovalActionApproved && reviewedPost.Status == domain.PostStatusQueued {
 		payload := domain.PublishJobPayload{
-			PostID:     reviewedPost.ID,
-			ChannelID:  reviewedPost.ChannelID,
-			QueueTier:  reviewedPost.QueueTier,
-			Attempt:    1,
-			EnqueuedAt: time.Now().UTC(),
+			OrganizationID: reviewedPost.OrganizationID,
+			PostID:         reviewedPost.ID,
+			ChannelID:      reviewedPost.ChannelID,
+			QueueTier:      reviewedPost.QueueTier,
+			Attempt:        1,
+			EnqueuedAt:     time.Now().UTC(),
 		}
 		_ = s.redis.EnqueuePublishJob(ctx, payload)
 	}
@@ -353,11 +355,12 @@ func (s *Server) handleReviewPost(w http.ResponseWriter, r *http.Request) {
 				otherReviewed, err := s.store.ReviewPost(ctx, p.ID, tc.UserID, action, req.Note)
 				if err == nil && action == domain.ApprovalActionApproved && otherReviewed.Status == domain.PostStatusQueued {
 					_ = s.redis.EnqueuePublishJob(ctx, domain.PublishJobPayload{
-						PostID:     otherReviewed.ID,
-						ChannelID:  otherReviewed.ChannelID,
-						QueueTier:  otherReviewed.QueueTier,
-						Attempt:    1,
-						EnqueuedAt: time.Now().UTC(),
+						OrganizationID: otherReviewed.OrganizationID,
+						PostID:         otherReviewed.ID,
+						ChannelID:      otherReviewed.ChannelID,
+						QueueTier:      otherReviewed.QueueTier,
+						Attempt:        1,
+						EnqueuedAt:     time.Now().UTC(),
 					})
 				}
 			}
@@ -459,11 +462,12 @@ func (s *Server) handlePublishPostNow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payload := domain.PublishJobPayload{
-		PostID:     post.ID,
-		ChannelID:  post.ChannelID,
-		QueueTier:  post.QueueTier,
-		Attempt:    post.RetryCount + 1,
-		EnqueuedAt: time.Now().UTC(),
+		OrganizationID: post.OrganizationID,
+		PostID:         post.ID,
+		ChannelID:      post.ChannelID,
+		QueueTier:      post.QueueTier,
+		Attempt:        post.RetryCount + 1,
+		EnqueuedAt:     time.Now().UTC(),
 	}
 	if err := s.redis.EnqueuePublishJob(ctx, payload); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})

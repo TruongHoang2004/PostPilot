@@ -11,6 +11,7 @@ import (
 func (s *Server) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	redisErr := s.redis.Ping(ctx)
+	dbErr := s.store.Ping(ctx)
 	redisMode := "redis-tcp"
 	if s.redis.IsMemoryFallback() {
 		redisMode = "in-memory-fallback"
@@ -19,8 +20,14 @@ func (s *Server) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	fastDepth, _ := s.redis.QueueDepth(ctx, domain.QueueTierFast)
 	heavyDepth, _ := s.redis.QueueDepth(ctx, domain.QueueTierHeavy)
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":            "healthy",
+	status, code := "healthy", http.StatusOK
+	if redisErr != nil || dbErr != nil {
+		status = "unhealthy"
+		code = http.StatusServiceUnavailable
+	}
+	writeJSON(w, code, map[string]any{
+		"database_ok":       dbErr == nil,
+		"status":            status,
 		"service":           "postpilot-api",
 		"redis_mode":        redisMode,
 		"redis_ok":          redisErr == nil,
@@ -43,4 +50,3 @@ func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, stats)
 }
-

@@ -11,8 +11,6 @@ import {
   ChevronDown,
   Check,
   Plus,
-  FlaskConical,
-  RotateCcw,
   Clock,
   X,
 } from "lucide-react";
@@ -51,9 +49,7 @@ export function Header({
     switchOrg,
     createOrg,
     currentRole,
-    actualRole,
-    isSimulating,
-    simulateRole,
+    logout,
   } = useOrg();
   const { toast } = useDialog();
 
@@ -61,13 +57,11 @@ export function Header({
 
   // Dropdown states
   const [orgDropdownOpen, setOrgDropdownOpen] = useState<boolean>(false);
-  const [roleDropdownOpen, setRoleDropdownOpen] = useState<boolean>(false);
   const [showCreateOrgModal, setShowCreateOrgModal] = useState<boolean>(false);
   const [newOrgName, setNewOrgName] = useState<string>("");
   const [isCreatingOrg, setIsCreatingOrg] = useState<boolean>(false);
 
   const orgRef = useRef<HTMLDivElement>(null);
-  const roleRef = useRef<HTMLDivElement>(null);
 
   // Close dropdowns on click outside
   useEffect(() => {
@@ -75,9 +69,7 @@ export function Header({
       if (orgRef.current && !orgRef.current.contains(event.target as Node)) {
         setOrgDropdownOpen(false);
       }
-      if (roleRef.current && !roleRef.current.contains(event.target as Node)) {
-        setRoleDropdownOpen(false);
-      }
+
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -262,70 +254,8 @@ export function Header({
 
           {/* System Status, Role Simulator & Controls */}
           <div className="flex items-center gap-2">
-            {/* Role Simulator Pill */}
-            <div className="relative" ref={roleRef}>
-              <button
-                type="button"
-                onClick={() => setRoleDropdownOpen(!roleDropdownOpen)}
-                title="Mô phỏng vai trò để kiểm tra tính năng RBAC"
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-bold transition-all ${
-                  isSimulating
-                    ? "ring-2 ring-amber-400/50 " + (roleColorMap[currentRole] || "")
-                    : roleColorMap[currentRole] || "bg-slate-100 text-slate-700"
-                }`}
-              >
-                <FlaskConical className={`h-3.5 w-3.5 ${isSimulating ? "text-amber-500 animate-bounce" : ""}`} />
-                <span className="capitalize">{currentRole}</span>
-                {isSimulating && <span className="text-[9px] bg-amber-500 text-white px-1 rounded">SIM</span>}
-                <ChevronDown className="h-3 w-3 opacity-60" />
-              </button>
-
-              {roleDropdownOpen && (
-                <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl py-2 z-50 animate-fade-in text-xs space-y-1">
-                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Mô phỏng vai trò RBAC
-                  </div>
-
-                  {["OWNER", "ADMIN", "MANAGER", "APPROVER", "EDITOR", "VIEWER"].map((r) => {
-                    const isCurrent = currentRole === r;
-                    return (
-                      <button
-                        key={r}
-                        type="button"
-                        onClick={() => {
-                          simulateRole(r);
-                          setRoleDropdownOpen(false);
-                          toast(`🧪 Đang mô phỏng quyền: ${r}`, "info");
-                        }}
-                        className={`w-full px-3 py-1.5 text-left flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors ${
-                          isCurrent ? "font-bold text-blue-600 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-950/20" : "text-slate-700 dark:text-slate-300"
-                        }`}
-                      >
-                        <span className="capitalize">{r}</span>
-                        {isCurrent && <Check className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />}
-                      </button>
-                    );
-                  })}
-
-                  {isSimulating && (
-                    <div className="border-t border-slate-100 dark:border-slate-800 mt-1 pt-1 px-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          simulateRole(null);
-                          setRoleDropdownOpen(false);
-                          toast(`Đã hoàn tất mô phỏng, trở lại vai trò thực tế: ${actualRole}`, "success");
-                        }}
-                        className="w-full px-3 py-1.5 rounded-lg text-left text-rose-600 dark:text-rose-400 font-semibold hover:bg-rose-50 dark:hover:bg-rose-950/40 flex items-center gap-1.5 transition-colors"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        <span>Hủy mô phỏng (Về: {actualRole})</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            <span className="text-xs font-semibold">{currentRole}</span>
+            <button onClick={logout} className="rounded-lg border px-3 py-1.5 text-xs">Đăng xuất</button>
 
             {/* Status Pill */}
             <div

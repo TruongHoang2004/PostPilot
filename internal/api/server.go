@@ -87,6 +87,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/register", s.handleAuthRegister)
 	mux.HandleFunc("POST /api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("GET /api/v1/auth/me", s.handleAuthMe)
+	mux.HandleFunc("POST /api/v1/auth/claim-legacy-workspace", s.handleClaimLegacyWorkspace)
 	mux.HandleFunc("GET /api/v1/organizations", s.handleListOrganizations)
 	mux.HandleFunc("POST /api/v1/organizations", s.handleCreateOrganization)
 	mux.HandleFunc("GET /api/v1/organizations/{id}/members", s.handleListOrganizationMembers)
@@ -143,7 +144,7 @@ func (s *Server) withMiddlewares(next http.Handler) http.Handler {
 		start := time.Now()
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Key, X-Organization-Id, X-Simulate-Role, X-User-Id")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Key, X-Organization-Id")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

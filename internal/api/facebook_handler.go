@@ -67,11 +67,25 @@ func (s *Server) handleFBOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, targetHost+"/?oauth=error&message="+url.QueryEscape("missing oauth state parameter"), http.StatusTemporaryRedirect)
 		return
 	}
-	orgID, _, err := crypto.VerifyOAuthState(state, s.cfg.APIAdminKey)
+	orgID, userID, err := crypto.VerifyOAuthState(state, s.cfg.APIAdminKey)
 	if err != nil {
 		http.Redirect(w, r, targetHost+"/?oauth=error&message="+url.QueryEscape("invalid or expired oauth state: "+err.Error()), http.StatusTemporaryRedirect)
 		return
 	}
+
+	user, userErr := s.store.GetUserByID(ctx, userID)
+	members, memberErr := s.store.ListOrganizationMembers(ctx, orgID)
+	allowed := false
+	for _, member := range members {
+		if member.UserID == userID && (member.OrgRole == domain.OrgRoleOwner || member.OrgRole == domain.OrgRoleAdmin) {
+			allowed = true
+		}
+	}
+	if userErr != nil || user == nil || !user.IsActive || memberErr != nil || !allowed {
+		http.Error(w, "OAuth workspace access revoked", http.StatusForbidden)
+		return
+	}
+	ctx = domain.WithTenantContext(ctx, &domain.TenantContext{UserID: userID, OrganizationID: orgID})
 
 	shortUserToken, err := s.fbClient.ExchangeCodeForUserToken(
 		ctx, s.cfg.FBAppID, s.cfg.FBAppSecret, s.cfg.FBRedirectURI, code,
@@ -125,7 +139,7 @@ func (s *Server) exchangeAndSaveFacebookChannels(ctx context.Context, shortUserT
 		return nil, errors.New("facebook client is not configured")
 	}
 	if orgID == "" {
-		orgID = domain.DefaultOrganizationID
+		return nil, errors.New("organization is required")
 	}
 	longUserToken := shortUserToken
 
@@ -182,8 +196,5 @@ func (s *Server) handleFBWebhookVerify(w http.ResponseWriter, r *http.Request) {
 
 // handleFBWebhookEvent receives webhook event payloads from Meta.
 func (s *Server) handleFBWebhookEvent(w http.ResponseWriter, r *http.Request) {
-	var payload map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&payload)
-	s.logger.Info("Received Meta Webhook event", "object", payload["object"])
-	writeJSON(w, http.StatusOK, map[string]any{"received": true})
+	writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "webhook event processing is not available; scheduled publishing uses the worker"})
 }

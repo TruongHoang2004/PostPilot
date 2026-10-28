@@ -123,4 +123,3 @@ func (s *Server) handlePresignUpload(w http.ResponseWriter, r *http.Request) {
 		"media_asset": asset,
 	})
 }
-

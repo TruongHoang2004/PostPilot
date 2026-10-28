@@ -178,7 +178,7 @@ func TenantFromContext(ctx context.Context) *TenantContext {
 			return tc
 		}
 	}
-	return DefaultTenantContext()
+	return &TenantContext{}
 }
 
 // IsOrgAdminOrOwner checks if the tenant context user has organization-wide administrative authority.

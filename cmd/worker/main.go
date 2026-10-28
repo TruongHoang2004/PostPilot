@@ -14,9 +14,9 @@ import (
 	"github.com/TruongHoang2004/PostPilot/internal/crypto"
 	"github.com/TruongHoang2004/PostPilot/internal/database"
 	_ "github.com/TruongHoang2004/PostPilot/internal/database/pgdriver"
-	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
+	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 	"github.com/TruongHoang2004/PostPilot/internal/worker"
 )
 
@@ -52,11 +52,15 @@ func main() {
 		logger.Info("Worker connected to PostgreSQL")
 		store = database.NewPostgresStore(db)
 	} else {
-		logger.Warn("Worker falling back to InMemoryStore")
-		store = database.NewInMemoryStore()
+		logger.Error("PostgreSQL required; worker cannot start")
+		os.Exit(1)
 	}
 
 	redisClient := redis.NewClient(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+	if err := redisClient.Ping(context.Background()); err != nil {
+		logger.Error("Redis required", "error", err)
+		os.Exit(1)
+	}
 	fbClient := facebook.NewClient(cfg.FBGraphBaseURL, cfg.FBGraphVersion)
 	notif := notifier.NewTelegramNotifier(cfg.TelegramBotToken, cfg.TelegramChatID, logger)
 

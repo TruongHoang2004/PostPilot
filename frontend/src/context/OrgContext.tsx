@@ -1,230 +1,94 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
-import { Organization, ChannelGroup, User, OrganizationMember } from "@/lib/types";
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
+import { Organization, ChannelGroup, User, OrganizationMember, GroupRole } from "@/lib/types";
 import { api } from "@/lib/api";
 
-export interface OrgContextType {
+interface OrgContextType {
   currentOrg: Organization | null;
   organizations: Organization[];
-  switchOrg: (org: Organization) => void;
-  createOrg: (name: string, slug?: string) => Promise<Organization>;
-  currentRole: string; // Effective role ('OWNER' | 'ADMIN' | 'MEMBER' | 'MANAGER' | 'APPROVER' | 'EDITOR' | 'VIEWER')
-  actualRole: string;
-  isSimulating: boolean;
-  simulateRole: (role: string | null) => void;
+  currentUser: User | null;
+  currentMember: OrganizationMember | null;
   channelGroups: ChannelGroup[];
-  refreshOrgs: () => Promise<void>;
-  refreshGroups: () => Promise<void>;
+  channelRoles: Record<string, GroupRole>;
+  currentRole: string;
+  actualRole: string;
   canManageOrg: boolean;
   canCreatePost: boolean;
   canPublishDirectly: boolean;
   canApprovePost: boolean;
-  currentUser: User | null;
-  currentMember: OrganizationMember | null;
   loading: boolean;
+  error: string | null;
+  switchOrg: (org: Organization) => void;
+  createOrg: (name: string, slug?: string) => Promise<Organization>;
+  refreshOrgs: () => Promise<void>;
+  refreshGroups: () => Promise<void>;
+  logout: () => void;
 }
-
 const OrgContext = createContext<OrgContextType | undefined>(undefined);
-
-const DEFAULT_FALLBACK_ORG: Organization = {
-  id: "00000000-0000-0000-0000-000000000001",
-  name: "Không gian làm việc chính",
-  slug: "main-workspace",
-  created_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-};
 
 export function OrgProvider({ children }: { children: React.ReactNode }) {
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [currentOrg, setCurrentOrg] = useState<Organization | null>(null);
-  const [channelGroups, setChannelGroups] = useState<ChannelGroup[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [currentMember, setCurrentMember] = useState<OrganizationMember | null>(null);
-  const [simulatedRole, setSimulatedRoleState] = useState<string | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-
-  // 1. Fetch channel groups for the currently selected org
+  const [channelGroups, setChannelGroups] = useState<ChannelGroup[]>([]);
+  const [channelRoles, setChannelRoles] = useState<Record<string, GroupRole>>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const generation = useRef(0);
+  const reset = useCallback(() => {
+    generation.current++;
+    setCurrentUser(null); setCurrentMember(null); setCurrentOrg(null);
+    setOrganizations([]); setChannelGroups([]); setChannelRoles({}); setError(null);
+  }, []);
+  const logout = useCallback(() => { api.clearAuth(); reset(); setLoading(false); }, [reset]);
   const refreshGroups = useCallback(async () => {
-    try {
-      const groups = await api.getChannelGroups();
-      setChannelGroups(groups);
-    } catch (err) {
-      console.warn("Lỗi tải danh sách Channel Groups:", err);
-      setChannelGroups([]);
-    }
+    if (!api.getToken()) return;
+    const epoch = generation.current;
+    try { const groups = await api.getChannelGroups(); if (epoch === generation.current) setChannelGroups(groups); }
+    catch (e) { if (epoch === generation.current) setError(e instanceof Error ? e.message : "Không tải được nhóm kênh"); }
   }, []);
-
-  // 2. Fetch all organizations and profile
   const refreshOrgs = useCallback(async () => {
-    setLoading(true);
+    const epoch = ++generation.current;
+    if (!api.getToken()) { reset(); setLoading(false); return; }
+    setLoading(true); setError(null);
+    // Clear the previous workspace immediately, so errors never retain another tenant's UI.
+    setCurrentOrg(null); setCurrentMember(null); setChannelGroups([]); setChannelRoles({});
     try {
-      const [orgsList, meData] = await Promise.allSettled([
-        api.getOrganizations(),
-        api.getMe(),
-      ]);
-
-      let orgs: Organization[] = [];
-      if (orgsList.status === "fulfilled" && Array.isArray(orgsList.value)) {
-        orgs = orgsList.value;
-      }
-
-      if (meData.status === "fulfilled" && meData.value) {
-        if (meData.value.user) setCurrentUser(meData.value.user);
-        if (meData.value.member) setCurrentMember(meData.value.member);
-      }
-
+      const orgs = await api.getOrganizations();
+      if (epoch !== generation.current) return;
       setOrganizations(orgs);
-
-      // Determine active organization
-      const savedOrgId = api.getActiveOrgId();
-      let active: Organization | null = null;
-
-      if (savedOrgId && orgs.length > 0) {
-        active = orgs.find((o) => o.id === savedOrgId) || null;
-      }
-
-      if (!active && orgs.length > 0) {
-        active = orgs[0];
-        api.setActiveOrgId(orgs[0].id);
-      } else if (!active && orgs.length === 0) {
-        active = DEFAULT_FALLBACK_ORG;
-        api.setActiveOrgId(DEFAULT_FALLBACK_ORG.id);
-      }
-
-      setCurrentOrg(active);
-    } catch (err) {
-      console.warn("Lỗi đồng bộ Organization:", err);
-      setCurrentOrg(DEFAULT_FALLBACK_ORG);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Initial load
+      const active = orgs.find(o => o.id === api.getActiveOrgId()) || orgs[0];
+      if (!active) throw new Error("Tài khoản chưa có workspace. Hãy liên hệ quản trị viên.");
+      api.setActiveOrgId(active.id);
+      const me = await api.getMe();
+      const groups = await api.getChannelGroups();
+      if (epoch !== generation.current) return;
+      if (!me.member || me.organization.id !== active.id) throw new Error("Không xác minh được quyền trong workspace.");
+      setCurrentUser(me.user); setCurrentMember(me.member); setCurrentOrg(active);
+      setChannelRoles(me.channel_roles || {}); setChannelGroups(groups);
+    } catch (e) {
+      if (epoch === generation.current) setError(e instanceof Error ? e.message : "Không tải được workspace");
+    } finally { if (epoch === generation.current) setLoading(false); }
+  }, [reset]);
   useEffect(() => {
-    const savedSimRole = api.getSimulateRole();
-    if (savedSimRole) {
-      setSimulatedRoleState(savedSimRole);
-    }
     refreshOrgs();
+    const expired = () => { reset(); setLoading(false); };
+    window.addEventListener("postpilot-session-expired", expired);
+    return () => window.removeEventListener("postpilot-session-expired", expired);
+  }, [refreshOrgs, reset]);
+  const switchOrg = useCallback((org: Organization) => { api.setActiveOrgId(org.id); void refreshOrgs(); }, [refreshOrgs]);
+  const createOrg = useCallback(async (name: string, slug?: string) => {
+    const created = await api.createOrganization(name, slug); api.setActiveOrgId(created.id); await refreshOrgs(); return created;
   }, [refreshOrgs]);
-
-  // When active org changes, refresh channel groups
-  useEffect(() => {
-    if (currentOrg) {
-      refreshGroups();
-    }
-  }, [currentOrg, refreshGroups]);
-
-  // Switch Active Workspace
-  const switchOrg = useCallback(
-    (org: Organization) => {
-      setCurrentOrg(org);
-      api.setActiveOrgId(org.id);
-      refreshGroups();
-    },
-    [refreshGroups]
-  );
-
-  // Create Workspace
-  const createOrg = useCallback(
-    async (name: string, slug?: string): Promise<Organization> => {
-      const created = await api.createOrganization(name, slug);
-      setOrganizations((prev) => [...prev, created]);
-      switchOrg(created);
-      return created;
-    },
-    [switchOrg]
-  );
-
-  // Simulate Role
-  const simulateRole = useCallback((role: string | null) => {
-    api.setSimulateRole(role);
-    setSimulatedRoleState(role);
-  }, []);
-
-  // Compute effective role & RBAC permissions
-  const actualRole = useMemo(() => {
-    return currentMember?.org_role || "OWNER";
-  }, [currentMember]);
-
-  const currentRole = useMemo(() => {
-    return simulatedRole || actualRole;
-  }, [simulatedRole, actualRole]);
-
-  const isSimulating = Boolean(simulatedRole);
-
-  const canManageOrg = useMemo(() => {
-    const roleUpper = currentRole.toUpperCase();
-    return roleUpper === "OWNER" || roleUpper === "ADMIN";
-  }, [currentRole]);
-
-  const canCreatePost = useMemo(() => {
-    const roleUpper = currentRole.toUpperCase();
-    return roleUpper !== "VIEWER";
-  }, [currentRole]);
-
-  const canPublishDirectly = useMemo(() => {
-    const roleUpper = currentRole.toUpperCase();
-    return ["OWNER", "ADMIN", "MANAGER", "APPROVER"].includes(roleUpper);
-  }, [currentRole]);
-
-  const canApprovePost = useMemo(() => {
-    const roleUpper = currentRole.toUpperCase();
-    return ["OWNER", "ADMIN", "MANAGER", "APPROVER"].includes(roleUpper);
-  }, [currentRole]);
-
-  const value = useMemo(
-    () => ({
-      currentOrg,
-      organizations,
-      switchOrg,
-      createOrg,
-      currentRole,
-      actualRole,
-      isSimulating,
-      simulateRole,
-      channelGroups,
-      refreshOrgs,
-      refreshGroups,
-      canManageOrg,
-      canCreatePost,
-      canPublishDirectly,
-      canApprovePost,
-      currentUser,
-      currentMember,
-      loading,
-    }),
-    [
-      currentOrg,
-      organizations,
-      switchOrg,
-      createOrg,
-      currentRole,
-      actualRole,
-      isSimulating,
-      simulateRole,
-      channelGroups,
-      refreshOrgs,
-      refreshGroups,
-      canManageOrg,
-      canCreatePost,
-      canPublishDirectly,
-      canApprovePost,
-      currentUser,
-      currentMember,
-      loading,
-    ]
-  );
-
-  return <OrgContext.Provider value={value}>{children}</OrgContext.Provider>;
+  const actualRole = currentMember?.org_role || "";
+  const canManageOrg = actualRole === "OWNER" || actualRole === "ADMIN";
+  const roles = Object.values(channelRoles);
+  const canCreatePost = canManageOrg || roles.some(r => ["MANAGER", "APPROVER", "EDITOR"].includes(r));
+  const canApprovePost = canManageOrg || roles.some(r => ["MANAGER", "APPROVER"].includes(r));
+  return <OrgContext.Provider value={{ currentOrg, organizations, currentUser, currentMember, channelGroups, channelRoles,
+    currentRole: actualRole, actualRole, canManageOrg, canCreatePost, canPublishDirectly: canApprovePost,
+    canApprovePost, loading, error, switchOrg, createOrg, refreshOrgs, refreshGroups, logout }}>{children}</OrgContext.Provider>;
 }
-
-export function useOrg() {
-  const context = useContext(OrgContext);
-  if (!context) {
-    throw new Error("useOrg must be used within an OrgProvider");
-  }
-  return context;
-}
+export function useOrg() { const context = useContext(OrgContext); if (!context) throw new Error("useOrg requires OrgProvider"); return context; }

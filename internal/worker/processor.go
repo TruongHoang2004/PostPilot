@@ -12,9 +12,9 @@ import (
 	"github.com/TruongHoang2004/PostPilot/internal/crypto"
 	"github.com/TruongHoang2004/PostPilot/internal/database"
 	"github.com/TruongHoang2004/PostPilot/internal/domain"
-	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
+	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 )
 
 // Processor manages worker pools consuming from `FAST` and `HEAVY` queues,
@@ -104,7 +104,12 @@ func (p *Processor) workerLoop(ctx context.Context, workerName string, tier stri
 		}
 
 		p.logger.Info("Worker picked up job", "worker", workerName, "post_id", job.PostID, "attempt", job.Attempt)
-		if err := p.ProcessPostByID(ctx, job.PostID); err != nil {
+		if job.OrganizationID == "" {
+			p.logger.Error("Legacy job missing organization; operator reconciliation required", "post_id", job.PostID)
+			continue
+		}
+		jobCtx := domain.WithTenantContext(ctx, &domain.TenantContext{OrganizationID: job.OrganizationID})
+		if err := p.ProcessPostByID(jobCtx, job.PostID); err != nil {
 			p.logger.Warn("Job execution ended with error", "worker", workerName, "post_id", job.PostID, "error", err)
 		}
 	}

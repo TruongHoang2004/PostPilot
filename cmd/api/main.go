@@ -16,11 +16,11 @@ import (
 	"github.com/TruongHoang2004/PostPilot/internal/crypto"
 	"github.com/TruongHoang2004/PostPilot/internal/database"
 	_ "github.com/TruongHoang2004/PostPilot/internal/database/pgdriver"
-	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/ai"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/storage"
+	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 	"github.com/TruongHoang2004/PostPilot/internal/worker"
 )
 
@@ -34,27 +34,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	var store database.Store
 	db, err := sql.Open("postgres", cfg.DatabaseURL)
-	if err == nil && db.Ping() == nil {
-		logger.Info("Connected to PostgreSQL database")
-		migrator := database.NewMigrator(db, logger)
-		if applied, mErr := migrator.Up(context.Background()); mErr != nil {
-			logger.Warn("Auto-migration warning", "error", mErr)
-		} else if applied > 0 {
-			logger.Info("Applied pending database migrations on startup", "count", applied)
-		}
-		store = database.NewPostgresStore(db)
-	} else {
-		logger.Warn("PostgreSQL not reachable, using InMemoryStore fallback for local preview", "error", err)
-		store = database.NewInMemoryStore()
+	if err != nil {
+		logger.Error("Cannot open PostgreSQL", "error", err)
+		os.Exit(1)
 	}
-
+	defer db.Close()
+	if err = db.PingContext(context.Background()); err != nil {
+		logger.Error("PostgreSQL required", "error", err)
+		os.Exit(1)
+	}
+	if _, err = database.NewMigrator(db, logger).Up(context.Background()); err != nil {
+		logger.Error("Migration failed", "error", err)
+		os.Exit(1)
+	}
+	store := database.NewPostgresStore(db)
 	redisClient := redis.NewClient(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
-	if redisClient.IsMemoryFallback() {
-		logger.Warn("Redis not reachable, using in-memory queue fallback")
-	} else {
-		logger.Info("Connected to Redis queue broker", "addr", cfg.RedisAddr)
+	if err = redisClient.Ping(context.Background()); err != nil {
+		logger.Error("Redis required", "error", err)
+		os.Exit(1)
 	}
 
 	fbClient := facebook.NewClient(cfg.FBGraphBaseURL, cfg.FBGraphVersion)

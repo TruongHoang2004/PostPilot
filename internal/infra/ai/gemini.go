@@ -39,19 +39,8 @@ func (g *GeminiGenerator) GeneratePostContent(ctx context.Context, topic, tone s
 		tone = "professional, engaging"
 	}
 
-	// If GEMINI_API_KEY is not configured or uses placeholder, return a template fallback
 	if g.apiKey == "" || g.apiKey == "your_gemini_api_key_here" {
-		fallback := fmt.Sprintf(
-			"🔥 %s — Xu hướng không thể bỏ lỡ!\n\n"+
-				"Bạn đã sẵn sàng bứt phá hiệu suất và tối ưu quy trình làm việc cùng giải pháp mới nhất về %s chưa?\n\n"+
-				"✅ Tiết kiệm 80%% thời gian vận hành\n"+
-				"✅ Chuẩn hóa quy trình tự động 24/7\n"+
-				"✅ Tăng trưởng tương tác tự nhiên và bền vững\n\n"+
-				"💬 Hãy để lại bình luận hoặc nhắn tin ngay cho Fanpage để nhận tư vấn chi tiết nhé!\n\n"+
-				"#FacebookMarketing #Automation #TangTruong #XuHuong2026",
-			strings.Title(topic), topic,
-		)
-		return fallback, "template-fallback", nil
+		return "", "", fmt.Errorf("Gemini is not configured; set GEMINI_API_KEY")
 	}
 
 	prompt := fmt.Sprintf(
