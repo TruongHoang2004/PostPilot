@@ -54,7 +54,7 @@ docker compose up -d
    - `S3_PUBLIC_BASE_URL=https://api-postpilot.hexta.org/fb-media`
    - `FRONTEND_URL=https://postpilot.hexta.org`
    - `NEXT_PUBLIC_API_URL=https://api-postpilot.hexta.org`
-   - `FB_REDIRECT_URI=https://api-postpilot.hexta.org/api/v1/auth/facebook/callback`
+   - `FB_REDIRECT_URI=https://postpilot.hexta.org/api/v1/auth/facebook/callback`
 3. Khởi chạy ứng dụng (tự động chạy mọi migration còn thiếu, hiện là `000001` → `000007`, qua container `fbposter-migrate`):
    ```bash
    cd /opt/postpilot
