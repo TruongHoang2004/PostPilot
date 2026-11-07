@@ -6,6 +6,8 @@ export interface SystemHealth {
   fast_queue_depth: number;
   heavy_queue_depth: number;
   timestamp: string;
+  storage_provider?: string;       // "s3" (MinIO/S3) or "r2" (Cloudflare R2)
+  storage_configured?: boolean;    // false: uploads answer 503 until the storage settings are complete
 }
 
 export interface SystemStats {
@@ -61,6 +63,8 @@ export interface Post {
   organization_id?: string;
   batch_id?: string;
   batch_name?: string;
+  library_item_id?: string;         // library item this post was scheduled from
+  delete_after_publish?: boolean;   // soft-delete the library item once this post is published
   channel_group_id?: string;
   channel_id: string;
   channel_name?: string;
@@ -328,3 +332,53 @@ export interface PostPatch {
   media_type?: MediaType;
   media_urls?: string[];
 }
+
+// Content library ("Bài soạn sẵn") — reusable ready-made posts; archived_at = soft delete ("Đã đăng" section)
+export interface LibraryItem {
+  id: string;
+  organization_id?: string;
+  channel_id?: string;
+  channel_name?: string;
+  title: string;
+  content: string;
+  link_url?: string;
+  media_type: MediaType;
+  media_urls: string[];
+  publish_count: number;
+  last_published_at?: string;
+  archived_at?: string;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LibraryPage { items: LibraryItem[]; limit: number; offset: number; has_more: boolean }
+
+export interface LibraryQuery {
+  archived?: boolean;
+  channel_id?: string;
+  q?: string;
+  limit?: number;            // ≤ 100
+  offset?: number;
+}
+
+export interface LibraryInput {
+  title?: string;
+  channel_id?: string;       // "" clears the preferred Fanpage on update
+  content?: string;
+  link_url?: string;
+  media_type?: MediaType;
+  media_urls?: string[];
+}
+
+export interface LibraryScheduleRequest {
+  channel_id?: string;
+  channel_ids?: string[];
+  channel_group_id?: string;
+  scheduled_at: string;      // RFC3339
+  delete_after_publish?: boolean;
+  submit_for_approval?: boolean;
+  max_retries?: number;
+}
+
+export interface LibraryScheduleResponse { batch_id?: string; count: number; posts: Post[] }

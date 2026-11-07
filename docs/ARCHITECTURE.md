@@ -18,12 +18,14 @@ PostPilot/
 │   │   ├── media.go                    # MediaAsset, MediaAttachment, MediaType & QueueTier Routing
 │   │   ├── post.go                     # Post Aggregate Root, PublishLog, PublishJobPayload & Invariants (CanEdit/ApplyPatch)
 │   │   ├── schedule.go                 # SchedulePlan, GenerateScheduleSlots, Occupancy, PostQuery, PostBatch, PostPatch
+│   │   ├── library.go                  # LibraryItem (bài soạn sẵn, xoá mềm bằng archived_at), LibraryQuery, LibraryPatch
 │   │   └── ports.go                    # Outbound Ports: PublisherPort, PublisherError, PublisherRegistry
 │   ├── app/publishing/                 # APPLICATION SERVICE: target resolution, RBAC/approval rules, bulk planning, dispatch
 │   │   └── service.go                  # Service.Create / PlanBulk / CreateBulk / Update (dùng chung cho handler đơn & hàng loạt)
 │   ├── api/                            # PRIMARY ADAPTER: Modular HTTP Handlers by Bounded Context
 │   │   ├── server.go                   # Router, Dependency Injection, Middleware (CORS, Logging, Recovery)
 │   │   ├── publishing_handler.go       # Publishing Context (/api/v1/posts*, /posts/bulk, /posts/bulk/preview, PATCH /posts/{id}, /posts/batches/{id})
+│   │   ├── library_handler.go          # Content Library (/api/v1/library*, /library/{id}/schedule, /restore)
 │   │   ├── channel_handler.go          # Channel Context (/api/v1/channels*)
 │   │   ├── facebook_handler.go         # Facebook Auth & Webhook Adapter (/api/v1/auth/facebook/*, /api/v1/webhooks/facebook)
 │   │   ├── media_handler.go            # Media Context (/api/v1/media/*)
@@ -60,7 +62,8 @@ PostPilot/
 │   ├── 000003_refactor_channels_schema.{up,down}.sql
 │   ├── 000004_add_organizations_and_rbac.{up,down}.sql
 │   ├── 000005_oauth_states.{up,down}.sql
-│   └── 000006_post_batches.{up,down}.sql            # post_batches + idx_posts_org_channel_sched
+│   ├── 000006_post_batches.{up,down}.sql            # post_batches + idx_posts_org_channel_sched
+│   └── 000007_content_library.{up,down}.sql         # library_items + posts.library_item_id/delete_after_publish
 ├── frontend/                           # Next.js 14 App Router Studio UI (:3000)
 │   └── src/
 │       ├── app/                        # RootLayout (layout.tsx) & Main Studio Page (page.tsx)
@@ -292,11 +295,19 @@ stateDiagram-v2
     CANCELLED --> [*]
 ```
 
+### Bài soạn sẵn & xoá mềm sau khi đăng
+
+`library_items` là nội dung dùng lại được; **lên lịch sao chép** nó thành `posts` thường (`library_item_id`, `delete_after_publish`) qua cùng `publishing.Service.Create` nên luật phê duyệt/RBAC không đổi. Khi worker gọi `Store.MarkPostPublished`, store (một giao dịch) khoá dòng theo thứ tự **mục thư viện → bài** (cùng thứ tự với `ON DELETE SET NULL` của `DeleteLibraryItem`, nên không thể deadlock), ghi `PUBLISHED`, rồi tăng `publish_count`/`last_published_at` của mục và, nếu bài mang `delete_after_publish`, đặt `archived_at` (xoá mềm → mục **Đã đăng**). Phần cập nhật thư viện nằm trong *savepoint*: lỗi ở đó chỉ ghi cảnh báo và **không bao giờ** làm mất trạng thái `PUBLISHED` (bài đã lên Facebook). Gọi lại cho bài đã `PUBLISHED` không đếm trùng. "Giữ lại" (`restore`) bỏ luôn cờ `delete_after_publish` của các bài đang chờ đăng thuộc mục, nên quyết định giữ nội dung là bền. `library_item_id` của bài chỉ được lưu khi mục thuộc đúng tổ chức (id lạ/khác tổ chức được lưu rỗng).
+
+### Lưu trữ media (S3 / MinIO / Cloudflare R2)
+
+`internal/infra/storage` dùng chung một client S3 Signature V4 viết bằng stdlib; `storage.NewFromConfig` chọn `STORAGE_PROVIDER=s3` (mặc định) hoặc `r2` (endpoint `https://<account>.r2.cloudflarestorage.com`, vùng `auto`). Cấu hình thiếu không làm API dừng: `Configured()` trả `false`, upload trả `503` và `/healthz` báo `storage_configured:false`.
+
 ---
 
 ## 6. Sơ Đồ Thực Thể Cơ Sở Dữ Liệu (PostgreSQL ER Diagram)
 
-Cơ sở dữ liệu PostgreSQL 16 được quản lý qua các bản migration `000001` → `000006`. Sơ đồ dưới đây mô tả lõi publishing; migration `000004` bổ sung `users`, `organizations`, `organization_members`, `organization_invitations`, `channel_groups`, `channel_group_items`, `channel_group_permissions`, `post_approvals`, `audit_logs` cùng cột `organization_id`/`batch_id`/review trên `posts`; `000005` thêm `oauth_states`; `000006` thêm `post_batches` (lô bài: `name`, `kind` BULK|FANOUT, `schedule_plan` JSONB, `item_count`) được `posts.batch_id` tham chiếu mềm, và chỉ mục `idx_posts_org_channel_sched (organization_id, channel_id, scheduled_at)` phục vụ lịch theo khoảng thời gian và phát hiện trùng giờ:
+Cơ sở dữ liệu PostgreSQL 16 được quản lý qua các bản migration `000001` → `000007`. Sơ đồ dưới đây mô tả lõi publishing; migration `000004` bổ sung `users`, `organizations`, `organization_members`, `organization_invitations`, `channel_groups`, `channel_group_items`, `channel_group_permissions`, `post_approvals`, `audit_logs` cùng cột `organization_id`/`batch_id`/review trên `posts`; `000005` thêm `oauth_states`; `000006` thêm `post_batches` (lô bài: `name`, `kind` BULK|FANOUT, `schedule_plan` JSONB, `item_count`) được `posts.batch_id` tham chiếu mềm, và chỉ mục `idx_posts_org_channel_sched (organization_id, channel_id, scheduled_at)` phục vụ lịch theo khoảng thời gian và phát hiện trùng giờ; `000007` thêm `library_items` (bài soạn sẵn: `title`, `channel_id` tuỳ chọn, nội dung/media, `publish_count`, `last_published_at`, `archived_at` = xoá mềm) và hai cột trên `posts`: `library_item_id` (FK `ON DELETE SET NULL`) cùng `delete_after_publish`:
 
 ```mermaid
 erDiagram

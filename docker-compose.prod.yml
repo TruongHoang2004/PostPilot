@@ -32,6 +32,14 @@ services:
       S3_BUCKET: fb-media
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
+      # Cloudflare R2 is optional: leave STORAGE_PROVIDER=s3 (MinIO) until the R2_* values are ready.
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-s3}
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL:-}
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
       FB_GRAPH_VERSION: ${FB_GRAPH_VERSION:-v20.0}
       FB_APP_ID: ${FB_APP_ID:-}
       FB_APP_SECRET: ${FB_APP_SECRET:-}

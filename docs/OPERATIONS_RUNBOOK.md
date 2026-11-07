@@ -13,7 +13,7 @@ Tài liệu này hướng dẫn cách vận hành, giám sát, xử lý sự c�
    Cập nhật giá trị này vào biến môi trường của cả `api` và `worker`. *(Lưu ý: Không làm mất khóa này vì toàn bộ Access Token trong bảng `channels` được mã hóa bằng nó).*
 2. **Lưu trữ Media công khai (Public S3 / CDN):**
    * Khi chạy trên Cloud, nền tảng mạng xã hội (như Meta Graph API) cần tải được file ảnh/video từ các đường dẫn trong `media_urls`.
-   * Do đó, hãy trỏ `S3_ENDPOINT` và `S3_PUBLIC_BASE_URL` tới **AWS S3**, **Cloudflare R2**, hoặc **MinIO có gắn tên miền HTTPS công khai** (ví dụ: `https://api-postpilot.hexta.org/fb-media`).
+   * Do đó, hãy trỏ `S3_ENDPOINT` và `S3_PUBLIC_BASE_URL` tới **AWS S3**, hoặc **MinIO có gắn tên miền HTTPS công khai** (ví dụ: `https://api-postpilot.hexta.org/fb-media`); hoặc chuyển sang **Cloudflare R2** bằng `STORAGE_PROVIDER=r2` + `R2_*` (xem mục *Cloudflare R2* trong [DEPLOY_VPS.md](DEPLOY_VPS.md)). Trạng thái hiện tại xem ở `GET /healthz` (`storage_provider`, `storage_configured`).
 3. **Bật Cảnh báo Telegram (`TELEGRAM_BOT_TOKEN` & `TELEGRAM_CHAT_ID`):**
    * Nhắn tin cho `@BotFather` trên Telegram để tạo Bot và lấy `TELEGRAM_BOT_TOKEN`.
    * Thêm Bot vào nhóm vận hành và điền `TELEGRAM_CHAT_ID` vào `.env`.
@@ -66,3 +66,7 @@ Khi bạn quản lý từ **100 đến 1.000+ Kênh (`Channel`)** hoặc đăng 
   docker exec -it fbposter-postgres psql -U fbposter -d fb_autoposter -c \
     "SELECT id, channel_id, status, retry_count, last_error_code, last_error_message FROM posts WHERE status = 'FAILED';"
   ```
+
+## Migration 000007 và bài soạn sẵn
+
+Xem mục *Triển khai & rollback migration 000007* trong [DEPLOY_VPS.md](DEPLOY_VPS.md): thứ tự deploy, rollback image-only (kèm SQL đối soát) và cảnh báo `migrate down` xoá bảng `library_items` (luôn `pg_dump` trước).

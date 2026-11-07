@@ -62,3 +62,70 @@ assert.equal(validateMedia("NONE", [], "ok"), null);
 const scheduledGroups = groupPostsByDay([post("pub", "2026-11-08T16:59:00Z", { status: "PUBLISHED", published_at: "2026-11-08T17:05:00Z" })], true);
 assert.deepEqual([...scheduledGroups.keys()], ["2026-11-08"], "calendar cells group by scheduled_at (23:59 local on the 8th), not by the later publication instant");
 console.log("PASS: weekday toggle, note codes, media rules and scheduled-day grouping");
+
+// --- month calendar and click-to-schedule helpers --------------------------------------------
+process.env.TZ = "Asia/Ho_Chi_Minh";
+const { monthGrid, sameMonth, shiftMonth, isPastDay, defaultSlotForDay, statusTone, willDeleteAfterPublish } = moduleContext.exports;
+{
+  const grid = monthGrid("2026-11-15");
+  assert.equal(grid.length, 42, "the month board always shows six weeks");
+  assert.equal(grid[0], "2026-10-26", "Nov 1 2026 is a Sunday, so the Monday-first board starts on Oct 26");
+  assert.equal(grid[41], "2026-12-06");
+  assert.equal(grid.filter(day => sameMonth(day, "2026-11-15")).length, 30, "every day of November is on the board exactly once");
+  assert.equal(monthGrid("2026-02-10")[0], "2026-01-26", "Feb 1 2026 is a Sunday as well");
+  assert.equal(monthGrid("2026-12-31")[0], "2026-11-30", "year-end anchor still starts on the Monday before Dec 1");
+  const { start, end } = rangeBounds("2026-11-15", "month");
+  assert.equal(localDateKey(start), "2026-10-26");
+  assert.equal(localDateKey(end), "2026-12-07", "range end is exclusive: the day after the last board cell");
+  assert.equal(shiftMonth("2026-11-15", 1), "2026-12-01");
+  assert.equal(shiftMonth("2026-01-31", -1), "2025-12-01", "month navigation never overflows into a 31st that does not exist");
+  assert.equal(shiftMonth("2026-03-31", 1), "2026-04-01");
+}
+{
+  const now = new Date(2026, 10, 10, 10, 0); // Tue 10 Nov 2026 10:00
+  assert.equal(isPastDay("2026-11-09", now), true);
+  assert.equal(isPastDay("2026-11-10", now), false, "today can still receive a schedule");
+  const slots = ["09:00", "12:00", "19:30"];
+  assert.equal(toLocalInputValue(defaultSlotForDay("2026-11-12", slots, now, [], [], 30)), "2026-11-12T09:00", "future day starts at the first slot");
+  assert.equal(toLocalInputValue(defaultSlotForDay("2026-11-10", slots, now, [], [], 30)), "2026-11-10T12:00", "today skips slots that already passed");
+  const busy = [post("busy", new Date(2026, 10, 10, 12, 0).toISOString(), { channel_id: "a" })];
+  assert.equal(toLocalInputValue(defaultSlotForDay("2026-11-10", slots, now, busy, ["a"], 30)), "2026-11-10T19:30", "a conflicting slot on the chosen channel is skipped");
+  assert.equal(toLocalInputValue(defaultSlotForDay("2026-11-10", slots, now, busy, ["b"], 30)), "2026-11-10T12:00", "another channel is unaffected");
+  const late = new Date(2026, 10, 10, 21, 15);
+  assert.equal(toLocalInputValue(defaultSlotForDay("2026-11-10", slots, late, [], [], 30)), "2026-11-10T22:00", "after the last slot, fall back to the next full hour");
+  const nearMidnight = new Date(2026, 10, 10, 23, 30);
+  assert.equal(toLocalInputValue(defaultSlotForDay("2026-11-10", slots, nearMidnight, [], [], 30)), "2026-11-10T23:35", "late evening must stay on the clicked day instead of rolling to 00:00");
+  const lastMinutes = new Date(2026, 10, 10, 23, 58);
+  assert.equal(toLocalInputValue(defaultSlotForDay("2026-11-10", slots, lastMinutes, [], [], 30)), "2026-11-11T09:00", "when no time is left today the first slot of the next day is used");
+  assert.equal(toLocalInputValue(defaultSlotForDay("2026-11-11", [], now, [], [], 30)), "2026-11-11T09:00", "empty preferences fall back to the default slots");
+}
+assert.equal(statusTone("PUBLISHED"), "success");
+assert.equal(statusTone("SCHEDULED"), "info");
+assert.equal(statusTone("PENDING_APPROVAL"), "warning");
+assert.equal(statusTone("FAILED"), "danger");
+assert.equal(statusTone("CANCELLED"), "neutral");
+assert.equal(willDeleteAfterPublish({ status: "SCHEDULED", library_item_id: "i", delete_after_publish: true }), true);
+assert.equal(willDeleteAfterPublish({ status: "FAILED", library_item_id: "i", delete_after_publish: true }), true, "a retryable failure can still publish");
+assert.equal(willDeleteAfterPublish({ status: "PUBLISHED", library_item_id: "i", delete_after_publish: true }), false, "already published: nothing left to promise");
+assert.equal(willDeleteAfterPublish({ status: "CANCELLED", library_item_id: "i", delete_after_publish: true }), false);
+assert.equal(willDeleteAfterPublish({ status: "SCHEDULED", library_item_id: "", delete_after_publish: true }), false, "item deleted: the flag is orphaned");
+assert.equal(willDeleteAfterPublish({ status: "SCHEDULED", library_item_id: "i", delete_after_publish: false }), false);
+console.log("PASS: month board geometry, month navigation, past-day rule, default slot for a clicked day and status tones");
+
+// The same month geometry must hold in a DST timezone (US fall-back 2026-11-01 and spring-forward 2026-03-08 inside the boards).
+process.env.TZ = "America/New_York";
+{
+  const nov = monthGrid("2026-11-15");
+  assert.equal(nov.length, 42);
+  assert.equal(nov[0], "2026-10-26");
+  assert.equal(new Set(nov).size, 42, "no duplicated or skipped day across the 25-hour fall-back day");
+  assert.equal(nov[6], "2026-11-01", "the fall-back Sunday is the 7th cell");
+  const mar = monthGrid("2026-03-10");
+  assert.equal(new Set(mar).size, 42, "no duplicated or skipped day across the 23-hour spring-forward day");
+  assert.ok(mar.includes("2026-03-08"));
+  assert.equal(localDateKey(rangeBounds("2026-11-15", "month").end), "2026-12-07");
+  assert.equal(shiftMonth("2026-03-31", 1), "2026-04-01");
+  const nowNY = new Date(2026, 2, 7, 20, 0);
+  assert.equal(toLocalInputValue(defaultSlotForDay("2026-03-08", ["09:00"], nowNY, [], [], 30)), "2026-03-08T09:00");
+}
+console.log("PASS: month geometry in a DST timezone");

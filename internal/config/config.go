@@ -34,6 +34,17 @@ type Config struct {
 	FBWebhookVerifyToken string
 	FrontendURL          string
 
+	// Object storage provider: "s3" (default, MinIO/AWS/compatible via S3_*) or "r2" (Cloudflare R2 via R2_*)
+	StorageProvider string
+
+	// Cloudflare R2 (S3-compatible). Optional: nothing connects until STORAGE_PROVIDER=r2 and all values are set.
+	R2AccountID       string
+	R2AccessKeyID     string
+	R2SecretAccessKey string
+	R2Bucket          string
+	R2PublicBaseURL   string // public bucket domain (r2.dev subdomain or custom domain) used for the media URLs sent to Meta
+	R2Endpoint        string // optional override, e.g. a jurisdiction endpoint; default https://<account>.r2.cloudflarestorage.com
+
 	// S3 / MinIO Media Storage
 	S3Endpoint      string
 	S3PublicBaseURL string
@@ -81,6 +92,14 @@ func Load() *Config {
 		FBRedirectURI:        getEnv("FB_REDIRECT_URI", "http://localhost:8080/api/v1/auth/facebook/callback"),
 		FBWebhookVerifyToken: getEnv("FB_WEBHOOK_VERIFY_TOKEN", "my_secure_webhook_verify_token"),
 		FrontendURL:          strings.TrimRight(getEnv("FRONTEND_URL", "http://localhost:3000"), "/"),
+
+		StorageProvider:   strings.ToLower(strings.TrimSpace(getEnv("STORAGE_PROVIDER", "s3"))),
+		R2AccountID:       strings.TrimSpace(getEnv("R2_ACCOUNT_ID", "")),
+		R2AccessKeyID:     strings.TrimSpace(getEnv("R2_ACCESS_KEY_ID", "")),
+		R2SecretAccessKey: strings.TrimSpace(getEnv("R2_SECRET_ACCESS_KEY", "")),
+		R2Bucket:          strings.TrimSpace(getEnv("R2_BUCKET", "")),
+		R2PublicBaseURL:   strings.TrimRight(strings.TrimSpace(getEnv("R2_PUBLIC_BASE_URL", "")), "/"),
+		R2Endpoint:        strings.TrimRight(strings.TrimSpace(getEnv("R2_ENDPOINT", "")), "/"),
 
 		S3Endpoint:      strings.TrimRight(getEnv("S3_ENDPOINT", "http://localhost:9000"), "/"),
 		S3PublicBaseURL: strings.TrimRight(getEnv("S3_PUBLIC_BASE_URL", "http://localhost:9000/fb-media"), "/"),

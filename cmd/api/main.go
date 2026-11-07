@@ -60,7 +60,13 @@ func main() {
 	}
 
 	fbClient := facebook.NewClient(cfg.FBGraphBaseURL, cfg.FBGraphVersion)
-	s3Service := storage.NewS3Service(cfg.S3Endpoint, cfg.S3PublicBaseURL, cfg.S3Region, cfg.S3Bucket, cfg.S3AccessKey, cfg.S3SecretKey)
+	s3Service := storage.NewFromConfig(cfg)
+	if s3Service.Configured() {
+		logger.Info("Object storage ready", "provider", s3Service.Provider)
+	} else {
+		// Not fatal: uploads answer 503 until the operator completes the settings (e.g. R2_* for Cloudflare R2).
+		logger.Warn("Object storage is not configured; media uploads are disabled", "provider", s3Service.Provider, "problems", s3Service.Problems())
+	}
 	aiGen := ai.NewGeminiGenerator(cfg.GeminiAPIKey, cfg.GeminiModel)
 	notif := notifier.NewTelegramNotifier(cfg.TelegramBotToken, cfg.TelegramChatID, logger)
 	proc := worker.NewProcessor(cfg, store, redisClient, cipher, fbClient, notif, logger)

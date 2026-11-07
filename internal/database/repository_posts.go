@@ -26,7 +26,8 @@ const postSelectColumns = `p.id, p.organization_id::text, p.channel_id, COALESCE
 	       p.scheduled_at::text, COALESCE(p.published_at::text, ''), p.external_post_id,
 	       COALESCE(p.submitted_by::text, ''), COALESCE(p.reviewed_by::text, ''), COALESCE(p.reviewed_at::text, ''), p.rejection_note,
 	       p.retry_count::text, p.max_retries::text, COALESCE(p.next_retry_at::text, ''), p.last_error_code::text, p.last_error_message,
-	       p.created_by, p.created_at::text, p.updated_at::text`
+	       p.created_by, p.created_at::text, p.updated_at::text,
+	       COALESCE(p.library_item_id::text, ''), p.delete_after_publish::text`
 
 const postSelectFrom = ` FROM posts p
 	LEFT JOIN channels c ON c.id = p.channel_id
@@ -59,7 +60,7 @@ type sqlRunner interface {
 func scanPost(sc rowScanner) (*domain.Post, error) {
 	var post domain.Post
 	var orgIDStr, platformStr, groupIDStr, batchIDStr, mediaStr, schedStr, pubStr string
-	var subStr, revStr, revAtStr, retryStr, maxRetryStr, nextRetryStr, errCodeStr, createdStr, updatedStr string
+	var subStr, revStr, revAtStr, retryStr, maxRetryStr, nextRetryStr, errCodeStr, createdStr, updatedStr, deleteFlagStr string
 	if err := sc.Scan(
 		&post.ID, &orgIDStr, &post.ChannelID, &post.ChannelName, &platformStr, &post.ExternalChannelID,
 		&groupIDStr, &batchIDStr, &post.BatchName,
@@ -68,10 +69,12 @@ func scanPost(sc rowScanner) (*domain.Post, error) {
 		&subStr, &revStr, &revAtStr, &post.RejectionNote,
 		&retryStr, &maxRetryStr, &nextRetryStr, &errCodeStr, &post.LastErrorMessage,
 		&post.CreatedBy, &createdStr, &updatedStr,
+		&post.LibraryItemID, &deleteFlagStr,
 	); err != nil {
 		return nil, err
 	}
 	post.OrganizationID = orgIDStr
+	post.DeleteAfterPublish = deleteFlagStr == "true" || deleteFlagStr == "t"
 	post.ChannelGroupID = groupIDStr
 	post.BatchID = batchIDStr
 	post.SubmittedBy = subStr
@@ -118,12 +121,13 @@ func insertPost(ctx context.Context, run sqlRunner, post *domain.Post) error {
 	query := `
 	INSERT INTO posts (
 		organization_id, channel_id, channel_group_id, batch_id, content, link_url, media_type, media_urls,
-		status, queue_tier, scheduled_at, max_retries, created_by, submitted_by
+		status, queue_tier, scheduled_at, max_retries, created_by, submitted_by, library_item_id, delete_after_publish
 	) VALUES (
 		$1, $2, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, $5, $6, $7, $8::jsonb,
-		$9, $10, $11, $12, $13, NULLIF($14, '')::uuid
+		$9, $10, $11, $12, $13, NULLIF($14, '')::uuid,
+		(SELECT id FROM library_items WHERE id = NULLIF($15, '')::uuid AND organization_id = $1), $16
 	)
-	RETURNING id, created_at::text, updated_at::text;`
+	RETURNING id, created_at::text, updated_at::text, COALESCE(library_item_id::text, '');`
 
 	var createdStr, updatedStr string
 	if err := run.QueryRowContext(
@@ -131,8 +135,12 @@ func insertPost(ctx context.Context, run sqlRunner, post *domain.Post) error {
 		post.OrganizationID, post.ChannelID, post.ChannelGroupID, post.BatchID,
 		post.Content, post.LinkURL, post.MediaType, string(mediaJSON),
 		post.Status, post.QueueTier, post.ScheduledAt, post.MaxRetries, post.CreatedBy, post.SubmittedBy,
-	).Scan(&post.ID, &createdStr, &updatedStr); err != nil {
+		post.LibraryItemID, post.DeleteAfterPublish,
+	).Scan(&post.ID, &createdStr, &updatedStr, &post.LibraryItemID); err != nil {
 		return err
+	}
+	if post.LibraryItemID == "" {
+		post.DeleteAfterPublish = false // unknown or foreign library item: stored unlinked
 	}
 	post.CreatedAt = parsePGTime(createdStr)
 	post.UpdatedAt = parsePGTime(updatedStr)
@@ -415,6 +423,11 @@ func (m *InMemoryStore) insertPostLocked(post *domain.Post, tc *domain.TenantCon
 	}
 	if post.MediaURLs == nil {
 		post.MediaURLs = []string{}
+	}
+	if post.LibraryItemID != "" { // same rule as PostgreSQL: an unknown or foreign library item is stored unlinked
+		if item, ok := m.library[post.LibraryItemID]; !ok || item.OrganizationID != post.OrganizationID {
+			post.LibraryItemID, post.DeleteAfterPublish = "", false
+		}
 	}
 	post.CreatedAt = now
 	post.UpdatedAt = now

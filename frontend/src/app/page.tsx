@@ -8,6 +8,7 @@ import { StatsCards } from "@/components/StatsCards";
 import { PostComposer } from "@/components/PostComposer";
 import { BulkComposer } from "@/components/BulkComposer";
 import { ScheduleView } from "@/components/ScheduleView";
+import { LibraryManager } from "@/components/LibraryManager";
 import { PageManager } from "@/components/PageManager";
 import { ApprovalInbox } from "@/components/ApprovalInbox";
 import { TeamAndGroupsManager } from "@/components/TeamAndGroupsManager";
@@ -104,7 +105,8 @@ function Studio() {
 
 
   const headings: Record<NavigationTab, { title: string; description: string }> = {
-    history: { title: "Lịch đăng của bạn.", description: "Theo dõi nội dung, thời gian và những bài cần xử lý." },
+    history: { title: "Lịch đăng của bạn.", description: "Bấm vào một ngày trên lịch để chọn bài soạn sẵn và giờ đăng; theo dõi bài đã lên lịch và đã đăng." },
+    library: { title: "Bài soạn sẵn.", description: "Soạn trước nội dung dùng lại được. Bài đặt “xoá sau khi đăng” sẽ chuyển sang mục Đã đăng để bạn quyết định giữ hay xoá." },
     studio: { title: "Một câu chuyện mới.", description: "Soạn nội dung, thêm hình ảnh và chọn thời điểm đăng." },
     bulk: { title: "Cả loạt bài, một lần xếp lịch.", description: "Soạn nhiều bài, chọn Fanpage và để hệ thống phân bổ khung giờ hợp lý." },
     approvals: { title: "Sẵn sàng để duyệt.", description: "Xem nội dung và quyết định trước khi bài được đăng." },
@@ -117,12 +119,13 @@ function Studio() {
         autoRefresh={autoRefresh} onToggleAutoRefresh={() => setAutoRefresh(!autoRefresh)} onManualRefresh={fetchAllData}
         activeTab={activeTab} onTabChange={setActiveTab} />
       <main className="dispatch-main">
-        <p className="dispatch-eyebrow">{currentOrg?.name} / {activeTab === "studio" || activeTab === "bulk" ? "Tạo nội dung" : "Không gian làm việc"}</p>
+        <p className="dispatch-eyebrow">{currentOrg?.name} / {activeTab === "studio" || activeTab === "bulk" || activeTab === "library" ? "Tạo nội dung" : "Không gian làm việc"}</p>
         <div className="dispatch-page-heading"><div><h1>{headings[activeTab].title}</h1><p>{headings[activeTab].description}</p></div>
-          {activeTab !== "studio" && activeTab !== "bulk" && <div className="dispatch-heading-actions"><button className="dispatch-button" onClick={() => setActiveTab("bulk")}>Lên lịch hàng loạt</button><button className="dispatch-button primary" onClick={() => setActiveTab("studio")}>Tạo bài viết<ArrowUpRight size={17} /></button></div>}
+          {activeTab !== "studio" && activeTab !== "bulk" && <div className="dispatch-heading-actions">{activeTab !== "library" && <button className="dispatch-button" onClick={() => setActiveTab("library")}>Bài soạn sẵn</button>}<button className="dispatch-button" onClick={() => setActiveTab("bulk")}>Lên lịch hàng loạt</button><button className="dispatch-button primary" onClick={() => setActiveTab("studio")}>Tạo bài viết<ArrowUpRight size={17} /></button></div>}
         </div>
         {dataError && <div className="dispatch-error" role="alert">{dataError}<button onClick={fetchAllData}>Thử lại</button></div>}
-        {activeTab === "history" && <><StatsCards stats={stats} onNavigate={setActiveTab} /><ScheduleView channels={channels} refreshToken={refreshToken} onRefresh={fetchAllData} onCompose={() => setActiveTab("studio")} /></>}
+        {activeTab === "history" && <><StatsCards stats={stats} onNavigate={setActiveTab} /><ScheduleView channels={channels} refreshToken={refreshToken} onRefresh={fetchAllData} onCompose={() => setActiveTab("studio")} onOpenLibrary={() => setActiveTab("library")} /></>}
+        {activeTab === "library" && <LibraryManager channels={channels} posts={upcoming} refreshToken={refreshToken} onChanged={fetchAllData} />}
         <section hidden={activeTab !== "studio"} aria-label="Soạn bài viết"><PostComposer channels={channels} posts={upcoming} onSuccess={fetchAllData} /></section>
         <section hidden={activeTab !== "bulk"} aria-label="Soạn hàng loạt"><BulkComposer channels={channels} onSuccess={() => { fetchAllData(); setActiveTab("history"); }} /></section>
         <div className="dispatch-legacy">

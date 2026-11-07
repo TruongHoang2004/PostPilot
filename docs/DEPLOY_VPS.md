@@ -55,7 +55,7 @@ docker compose up -d
    - `FRONTEND_URL=https://postpilot.hexta.org`
    - `NEXT_PUBLIC_API_URL=https://api-postpilot.hexta.org`
    - `FB_REDIRECT_URI=https://api-postpilot.hexta.org/api/v1/auth/facebook/callback`
-3. Khởi chạy ứng dụng (tự động chạy migration `000001` -> `000003` qua container `fbposter-migrate`):
+3. Khởi chạy ứng dụng (tự động chạy mọi migration còn thiếu, hiện là `000001` → `000007`, qua container `fbposter-migrate`):
    ```bash
    cd /opt/postpilot
    docker compose -f docker-compose.prod.yml pull
@@ -111,3 +111,29 @@ Nhờ thiết kế tách biệt `/opt/infra`, khi cần triển khai thêm dự 
   ssh -L 9001:localhost:9001 user@IP_VPS
   # Mở http://localhost:9001 trên trình duyệt máy cá nhân
   ```
+
+## Cloudflare R2 (tùy chọn)
+
+PostPilot dùng được Cloudflare R2 làm kho media thay MinIO — **chỉ bằng biến môi trường**, không cần đổi code. Mặc định không bật: nếu chưa điền thì hệ thống vẫn chạy với `STORAGE_PROVIDER=s3` (MinIO) và nếu chọn `r2` mà thiếu thông số thì API vẫn khởi động, chỉ upload trả `503` (xem `GET /healthz` → `storage_configured`).
+
+1. Trên Cloudflare: tạo bucket R2, tạo **API token** (Object Read & Write) để lấy `Access Key ID`/`Secret Access Key`, bật **Public access** cho bucket để Meta tải được ảnh/video. Dùng **custom domain** cho production; domain `r2.dev` của Cloudflare chỉ dành cho thử nghiệm và bị giới hạn tốc độ.
+2. Thêm **CORS** cho bucket nếu trình duyệt upload thẳng bằng presigned URL (`AllowedOrigins: https://postpilot.hexta.org`, `AllowedMethods: PUT`, `AllowedHeaders: *`).
+3. Điền vào `/opt/postpilot/.env` rồi tạo lại container `api` để nhận biến mới (`docker restart` KHÔNG đọc lại `.env`): `docker compose -f docker-compose.prod.yml up -d api`.
+   ```env
+   STORAGE_PROVIDER=r2
+   R2_ACCOUNT_ID=<Cloudflare account id>
+   R2_ACCESS_KEY_ID=<access key>
+   R2_SECRET_ACCESS_KEY=<secret key>
+   R2_BUCKET=<tên bucket>
+   R2_PUBLIC_BASE_URL=https://<domain công khai của bucket>
+   # Tùy chọn: R2_ENDPOINT=https://<account>.eu.r2.cloudflarestorage.com (jurisdiction EU)
+   ```
+4. Kiểm tra: `docker compose -f docker-compose.prod.yml logs api | grep "Object storage"` (thiếu cấu hình sẽ có dòng cảnh báo liệt kê tên biến còn thiếu, không in giá trị), rồi `curl -s https://api-postpilot.hexta.org/healthz` phải có `"storage_provider":"r2","storage_configured":true`, rồi thử tải một ảnh trong tab **Bài soạn sẵn**.
+
+Ghi chú: phần R2 đã có kiểm thử về chữ ký/URL nhưng **chưa được thử với tài khoản Cloudflare thật** — hãy thử upload một ảnh sau khi cấu hình. Endpoint mặc định `https://<account>.r2.cloudflarestorage.com`, vùng ký `auto`, kiểu path-style; URL ký sẵn bắt buộc `https`. Media cũ đã lưu theo MinIO giữ nguyên URL cũ.
+
+## Triển khai & rollback migration 000007 (Bài soạn sẵn)
+
+- **Thứ tự**: `migrate` chạy trước, sau đó `api`/`worker` (compose `depends_on: service_completed_successfully`). `api` cũng tự chạy migration khi khởi động. Đừng khởi động `worker` bản mới ngoài thứ tự này: `MarkPostPublished` đọc hai cột mới của `posts`.
+- **Tương thích ngược**: 000007 chỉ thêm bảng/cột/chỉ mục (idempotent), nên binary cũ chạy được trên schema mới. Rollback **chỉ image** (giữ schema 000007) là an toàn nhưng bản cũ không đếm lượt đăng và không xoá mềm bài soạn sẵn; với những bài đã đăng trong khoảng đó, đối soát bằng SQL: `UPDATE library_items li SET archived_at = COALESCE(li.archived_at, NOW()) FROM posts p WHERE p.library_item_id = li.id AND p.delete_after_publish AND p.status = 'PUBLISHED';`
+- **`migrate down` 000007 là phá huỷ**: xoá bảng `library_items` (toàn bộ bài soạn sẵn) và hai cột trên `posts`. Luôn `pg_dump` trước khi chạy.

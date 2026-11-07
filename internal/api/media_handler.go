@@ -9,7 +9,7 @@ import (
 
 // handleMediaUpload handles direct file uploads for images/videos and syncs to S3/MinIO (if configured).
 func (s *Server) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
-	if s.s3 == nil || s.s3.Endpoint == "" {
+	if !s.s3.Configured() {
 		writeJSON(w, 503, map[string]any{"error": "object storage is not configured"})
 		return
 	}
@@ -57,8 +57,8 @@ func (s *Server) handlePresignUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.s3 == nil || s.s3.Endpoint == "" {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "s3 storage is not configured"})
+	if !s.s3.Configured() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "object storage is not configured"})
 		return
 	}
 

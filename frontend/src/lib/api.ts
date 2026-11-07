@@ -5,6 +5,12 @@ import {
   BulkCreateResponse,
   BulkPreview,
   BulkRequest,
+  LibraryInput,
+  LibraryItem,
+  LibraryPage,
+  LibraryQuery,
+  LibraryScheduleRequest,
+  LibraryScheduleResponse,
   PostBatch,
   PostPage,
   PostPatch,
@@ -434,6 +440,46 @@ export const api = {
       body: JSON.stringify(patch),
     });
     return handleResponse<Post>(res);
+  },
+
+  // Content library ("Bài soạn sẵn")
+  async getLibrary(query: LibraryQuery = {}): Promise<LibraryPage> {
+    const params = new URLSearchParams();
+    if (query.archived) params.set("archived", "true");
+    if (query.channel_id) params.set("channel_id", query.channel_id);
+    if (query.q && query.q.trim()) params.set("q", query.q.trim());
+    if (query.limit && query.limit > 0) params.set("limit", String(query.limit));
+    if (query.offset && query.offset > 0) params.set("offset", String(query.offset));
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/library?${params.toString()}`, { cache: "no-store", headers: getHeaders() });
+    const data = await handleResponse<Partial<LibraryPage>>(res);
+    return { items: data.items || [], limit: data.limit ?? query.limit ?? 100, offset: data.offset ?? query.offset ?? 0, has_more: data.has_more ?? false };
+  },
+
+  async createLibraryItem(payload: LibraryInput): Promise<LibraryItem> {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/library`, { method: "POST", headers: getHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(payload) });
+    return handleResponse<LibraryItem>(res);
+  },
+
+  async updateLibraryItem(id: string, patch: LibraryInput): Promise<LibraryItem> {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/library/${id}`, { method: "PATCH", headers: getHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(patch) });
+    return handleResponse<LibraryItem>(res);
+  },
+
+  async deleteLibraryItem(id: string): Promise<void> {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/library/${id}`, { method: "DELETE", headers: getHeaders() });
+    await handleResponse<unknown>(res);
+  },
+
+  /** "Giữ lại": brings a soft-deleted ("Đã đăng") item back to the active library. */
+  async restoreLibraryItem(id: string): Promise<LibraryItem> {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/library/${id}/restore`, { method: "POST", headers: getHeaders() });
+    return handleResponse<LibraryItem>(res);
+  },
+
+  /** Copies a library item into scheduled posts (calendar click flow). */
+  async scheduleLibraryItem(id: string, payload: LibraryScheduleRequest): Promise<LibraryScheduleResponse> {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/library/${id}/schedule`, { method: "POST", headers: getHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(payload) });
+    return handleResponse<LibraryScheduleResponse>(res);
   },
 
   async getPostBatch(id: string): Promise<{ batch: PostBatch; posts: Post[] }> {

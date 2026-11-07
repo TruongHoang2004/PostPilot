@@ -8,7 +8,7 @@ import { useOrg } from "@/context/OrgContext";
 import { Modal } from "./Modal";
 import { useDialog } from "@/context/DialogContext";
 
-export type NavigationTab = "studio" | "bulk" | "approvals" | "pages" | "team" | "history";
+export type NavigationTab = "studio" | "bulk" | "library" | "approvals" | "pages" | "team" | "history";
 interface HeaderProps {
   health: SystemHealth | null;
   pendingApprovalsCount?: number;
@@ -29,7 +29,7 @@ export function Header({ health, pendingApprovalsCount = 0, loading, autoRefresh
   const [busy, setBusy] = useState(false);
   const [createError, setCreateError] = useState("");
   const tabs: { id: NavigationTab; name: string }[] = [
-    { id: "history", name: "Lịch đăng" }, { id: "studio", name: "Soạn bài" }, { id: "bulk", name: "Hàng loạt" },
+    { id: "history", name: "Lịch đăng" }, { id: "library", name: "Bài soạn sẵn" }, { id: "studio", name: "Soạn bài" }, { id: "bulk", name: "Hàng loạt" },
     { id: "approvals", name: "Phê duyệt" }, { id: "pages", name: "Fanpage" }, { id: "team", name: "Đội nhóm" },
   ];
   const roleLabel: Record<string, string> = { OWNER: "Chủ sở hữu", ADMIN: "Quản trị viên", MEMBER: "Thành viên" };

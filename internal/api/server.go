@@ -123,6 +123,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/posts/{id}/submit-approval", s.handlePostSubmitApproval)
 	mux.HandleFunc("POST /api/v1/posts/{id}/review", s.handleReviewPost)
 
+	// 4b. Content Library Module: reusable ready-made posts + schedule-from-library (library_handler.go)
+	mux.HandleFunc("GET /api/v1/library", s.handleListLibrary)
+	mux.HandleFunc("POST /api/v1/library", s.handleCreateLibraryItem)
+	mux.HandleFunc("GET /api/v1/library/{id}", s.handleGetLibraryItem)
+	mux.HandleFunc("PATCH /api/v1/library/{id}", s.handleUpdateLibraryItem)
+	mux.HandleFunc("DELETE /api/v1/library/{id}", s.handleDeleteLibraryItem)
+	mux.HandleFunc("POST /api/v1/library/{id}/restore", s.handleRestoreLibraryItem)
+	mux.HandleFunc("POST /api/v1/library/{id}/schedule", s.handleScheduleLibraryItem)
+
 	// 5. Channel (Publishing Target) Module (channel_handler.go)
 	mux.HandleFunc("GET /api/v1/channels", s.handleListChannels)
 	mux.HandleFunc("POST /api/v1/channels", s.handleUpsertChannel)

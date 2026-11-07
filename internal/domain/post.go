@@ -23,36 +23,39 @@ const (
 
 // Post is the core Aggregate Root of the "Post & Publishing" bounded context.
 type Post struct {
-	ID                string       `json:"id"`
-	OrganizationID    string       `json:"organization_id"`
-	BatchID           string       `json:"batch_id,omitempty"`
-	BatchName         string       `json:"batch_name,omitempty"`
-	ChannelGroupID    string       `json:"channel_group_id,omitempty"`
-	ChannelID         string       `json:"channel_id"`
-	ChannelName       string       `json:"channel_name,omitempty"`
-	Platform          PlatformType `json:"platform,omitempty"`
-	ExternalChannelID string       `json:"external_channel_id,omitempty"`
-	Content           string       `json:"content"`
-	LinkURL           string       `json:"link_url,omitempty"`
-	MediaType         string       `json:"media_type"`
-	MediaURLs         []string     `json:"media_urls"`
-	Status            string       `json:"status"`
-	QueueTier         string       `json:"queue_tier"`
-	ScheduledAt       time.Time    `json:"scheduled_at"`
-	PublishedAt       *time.Time   `json:"published_at,omitempty"`
-	ExternalPostID    string       `json:"external_post_id,omitempty"`
-	SubmittedBy       string       `json:"submitted_by,omitempty"`
-	ReviewedBy        string       `json:"reviewed_by,omitempty"`
-	ReviewedAt        *time.Time   `json:"reviewed_at,omitempty"`
-	RejectionNote     string       `json:"rejection_note,omitempty"`
-	RetryCount        int          `json:"retry_count"`
-	MaxRetries        int          `json:"max_retries"`
-	NextRetryAt       *time.Time   `json:"next_retry_at,omitempty"`
-	LastErrorCode     int          `json:"last_error_code,omitempty"`
-	LastErrorMessage  string       `json:"last_error_message,omitempty"`
-	CreatedBy         string       `json:"created_by"`
-	CreatedAt         time.Time    `json:"created_at"`
-	UpdatedAt         time.Time    `json:"updated_at"`
+	ID             string `json:"id"`
+	OrganizationID string `json:"organization_id"`
+	BatchID        string `json:"batch_id,omitempty"`
+	BatchName      string `json:"batch_name,omitempty"`
+	LibraryItemID  string `json:"library_item_id,omitempty"`
+	// DeleteAfterPublish soft-deletes the source library item once this post is published.
+	DeleteAfterPublish bool         `json:"delete_after_publish"`
+	ChannelGroupID     string       `json:"channel_group_id,omitempty"`
+	ChannelID          string       `json:"channel_id"`
+	ChannelName        string       `json:"channel_name,omitempty"`
+	Platform           PlatformType `json:"platform,omitempty"`
+	ExternalChannelID  string       `json:"external_channel_id,omitempty"`
+	Content            string       `json:"content"`
+	LinkURL            string       `json:"link_url,omitempty"`
+	MediaType          string       `json:"media_type"`
+	MediaURLs          []string     `json:"media_urls"`
+	Status             string       `json:"status"`
+	QueueTier          string       `json:"queue_tier"`
+	ScheduledAt        time.Time    `json:"scheduled_at"`
+	PublishedAt        *time.Time   `json:"published_at,omitempty"`
+	ExternalPostID     string       `json:"external_post_id,omitempty"`
+	SubmittedBy        string       `json:"submitted_by,omitempty"`
+	ReviewedBy         string       `json:"reviewed_by,omitempty"`
+	ReviewedAt         *time.Time   `json:"reviewed_at,omitempty"`
+	RejectionNote      string       `json:"rejection_note,omitempty"`
+	RetryCount         int          `json:"retry_count"`
+	MaxRetries         int          `json:"max_retries"`
+	NextRetryAt        *time.Time   `json:"next_retry_at,omitempty"`
+	LastErrorCode      int          `json:"last_error_code,omitempty"`
+	LastErrorMessage   string       `json:"last_error_message,omitempty"`
+	CreatedBy          string       `json:"created_by"`
+	CreatedAt          time.Time    `json:"created_at"`
+	UpdatedAt          time.Time    `json:"updated_at"`
 }
 
 // DetermineQueueTier automatically routes the post to FAST or HEAVY queue based on media type.

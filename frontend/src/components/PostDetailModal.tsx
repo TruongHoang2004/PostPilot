@@ -10,7 +10,7 @@ import { Modal } from "./Modal";
 import { PostStatusBadge } from "./PostStatusBadge";
 import { SchedulePicker } from "./SchedulePicker";
 import { useDialog } from "@/context/DialogContext";
-import { AUTHOR_ROLES, EDITABLE_STATUSES, fromLocalInputValue, toLocalInputValue } from "@/lib/schedule";
+import { AUTHOR_ROLES, EDITABLE_STATUSES, fromLocalInputValue, toLocalInputValue, willDeleteAfterPublish } from "@/lib/schedule";
 import { loadSchedulePrefs } from "@/lib/preferences";
 
 interface PostDetailModalProps {
@@ -234,6 +234,7 @@ export function PostDetailModal({ postId, onClose, onRefresh, posts = [] }: Post
                   {post.content || <span className="text-slate-400 dark:text-slate-500 italic">Không có văn bản</span>}
                 </div>
                 {post.batch_name && <p className="dispatch-muted text-xs mt-2">Thuộc lô bài: {post.batch_name}</p>}
+                {post.library_item_id && <p className="dispatch-muted text-xs mt-2">Lên lịch từ bài soạn sẵn{willDeleteAfterPublish(post) ? " · sẽ xoá mềm sang mục Đã đăng sau khi đăng" : post.delete_after_publish && post.status === "PUBLISHED" ? " · đã được đặt xoá mềm sau khi đăng (xem mục Đã đăng của Bài soạn sẵn)" : " · giữ lại trong Bài soạn sẵn"}.</p>}
               </div>}
 
               {/* Media Previews */}

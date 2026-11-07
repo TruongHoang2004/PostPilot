@@ -63,6 +63,7 @@ PostPilot/
     ├── infra/
     │   ├── redis/client.go            # Redis Queue Client (postpilot:queue:fast/heavy) + Channel Rate-Limit Cache
     │   ├── storage/s3_minio.go        # Ký AWS Signature V4 Presigned PUT URL cho S3 / MinIO / Cloudflare R2
+    │   ├── storage/provider.go        # Chọn nhà cung cấp lưu trữ: STORAGE_PROVIDER=s3 (mặc định) | r2 (R2_*), không bắt buộc kết nối
     │   ├── notifier/telegram.go       # Gửi cảnh báo thời gian thực qua Telegram Bot
     │   └── ai/gemini.go               # Tích hợp Google Gemini API tự động viết nội dung bài đăng
     ├── platform/                      # Secondary Platform Adapters thực thi domain.PublisherPort

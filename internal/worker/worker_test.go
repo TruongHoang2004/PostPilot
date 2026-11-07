@@ -206,3 +206,55 @@ func TestComputeBackoffDuration(t *testing.T) {
 		t.Fatalf("expected 15m for attempt 4, got %v", d4)
 	}
 }
+
+// A post scheduled from the library with "delete after publish" must soft-delete its library item
+// when the worker publishes it, while a post without the flag only bumps the publish counter.
+func TestProcessorArchivesLibraryItemAfterPublish(t *testing.T) {
+	cfg := config.Load()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := database.NewInMemoryStore()
+	redisClient := redis.NewInMemoryClient()
+	cipher, _ := crypto.NewTokenCipher(cfg.TokenEncryptionKey)
+	fbClient := facebook.NewClient("https://graph.facebook.com", "v20.0").WithHTTPClient(&http.Client{
+		Transport: mockRoundTripper{fn: func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "555_777"})
+		}},
+	})
+	notif := notifier.NewTelegramNotifier("", "", logger)
+	ctx := domain.WithTenantContext(context.Background(), domain.DefaultTenantContext())
+	encToken, _ := cipher.Encrypt("EAAB_permanent_page_token")
+	channel, err := store.UpsertChannel(ctx, &domain.Channel{Platform: domain.PlatformFacebook, ExternalID: "555", Name: "Library channel", EncryptedAccessToken: encToken, TokenStatus: domain.TokenStatusActive, IsActive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keepItem, _ := store.CreateLibraryItem(ctx, &domain.LibraryItem{Title: "keep", Content: "keep", MediaType: domain.MediaTypeNone})
+	dropItem, _ := store.CreateLibraryItem(ctx, &domain.LibraryItem{Title: "drop", Content: "drop", MediaType: domain.MediaTypeNone})
+	mk := func(item *domain.LibraryItem, flag bool) *domain.Post {
+		p, err := store.CreatePost(ctx, &domain.Post{ChannelID: channel.ID, Content: item.Content, MediaType: domain.MediaTypeNone, Status: domain.PostStatusScheduled, ScheduledAt: time.Now().UTC().Add(-time.Minute), MaxRetries: 3, LibraryItemID: item.ID, DeleteAfterPublish: flag})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	keepPost, dropPost := mk(keepItem, false), mk(dropItem, true)
+
+	proc := NewProcessor(cfg, store, redisClient, cipher, fbClient, notif, logger)
+	for _, p := range []*domain.Post{keepPost, dropPost} {
+		if err := proc.ProcessPostByID(ctx, p.ID); err != nil {
+			t.Fatalf("process %s: %v", p.ID, err)
+		}
+	}
+	// Re-processing a published post is a no-op and must not inflate the counter.
+	if err := proc.ProcessPostByID(ctx, dropPost.ID); err != nil {
+		t.Fatal(err)
+	}
+	kept, _ := store.GetLibraryItem(ctx, keepItem.ID)
+	dropped, _ := store.GetLibraryItem(ctx, dropItem.ID)
+	if kept.Archived() || kept.PublishCount != 1 {
+		t.Fatalf("item without the flag must stay active and count once: %+v", kept)
+	}
+	if !dropped.Archived() || dropped.PublishCount != 1 {
+		t.Fatalf("item with the flag must be soft-deleted after publishing: %+v", dropped)
+	}
+}

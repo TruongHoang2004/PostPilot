@@ -223,6 +223,10 @@ type Draft struct {
 	MediaURLs   []string
 	ScheduledAt time.Time
 	MaxRetries  int
+	// LibraryItemID links the post to the library item it was copied from; DeleteAfterPublish then
+	// soft-deletes that item once the post is published.
+	LibraryItemID      string
+	DeleteAfterPublish bool
 }
 
 // Options control how the draft enters the lifecycle.
@@ -247,6 +251,9 @@ func buildPost(tc *domain.TenantContext, target ResolvedTarget, draft Draft, opt
 		MaxRetries:     draft.MaxRetries,
 		CreatedBy:      tc.UserID,
 		SubmittedBy:    tc.UserID,
+
+		LibraryItemID:      draft.LibraryItemID,
+		DeleteAfterPublish: draft.DeleteAfterPublish && draft.LibraryItemID != "",
 	}
 	if mustPendingApproval {
 		post.PrepareForCreation(false, now)
@@ -298,7 +305,7 @@ func (s *Service) Create(ctx context.Context, targets Targets, draft Draft, opts
 		}
 		result.Posts = []*domain.Post{created}
 	}
-	s.audit(ctx, "POST_CREATE", "POST", result.Posts[0].ID, map[string]any{"count": len(result.Posts), "batch_id": result.BatchID, "publish_now": opts.PublishNow, "status": result.Posts[0].Status})
+	s.audit(ctx, "POST_CREATE", "POST", result.Posts[0].ID, map[string]any{"count": len(result.Posts), "batch_id": result.BatchID, "publish_now": opts.PublishNow, "status": result.Posts[0].Status, "library_item_id": draft.LibraryItemID})
 
 	// Dispatch publish_now jobs. A broker failure must not strand later posts in QUEUED (the scheduler
 	// never reclaims QUEUED), so every remaining post is parked as a retryable FAILED before returning.

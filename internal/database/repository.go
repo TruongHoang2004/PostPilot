@@ -57,6 +57,14 @@ type Store interface {
 	MarkPostFailedOrRetry(ctx context.Context, postID string, retryCount int, nextRetryAt *time.Time, finalStatus string, errCode int, errMsg string) error
 	CancelPost(ctx context.Context, postID string) error
 
+	// Content library (reusable ready-made posts; soft delete via archived_at)
+	CreateLibraryItem(ctx context.Context, item *domain.LibraryItem) (*domain.LibraryItem, error)
+	GetLibraryItem(ctx context.Context, id string) (*domain.LibraryItem, error)
+	QueryLibraryItems(ctx context.Context, q domain.LibraryQuery) ([]domain.LibraryItem, error)
+	UpdateLibraryItem(ctx context.Context, id string, patch domain.LibraryPatch) (*domain.LibraryItem, error)
+	DeleteLibraryItem(ctx context.Context, id string) error
+	RestoreLibraryItem(ctx context.Context, id string) (*domain.LibraryItem, error)
+
 	// Users
 	CreateUser(ctx context.Context, u *domain.User) (*domain.User, error)
 	GetUserByEmail(ctx context.Context, email string) (*domain.User, error)
@@ -404,13 +412,6 @@ func (s *PostgresStore) MarkPostProcessing(ctx context.Context, postID string) e
 		return err
 	}
 	res, err := s.db.ExecContext(ctx, "UPDATE posts SET status='PROCESSING',updated_at=NOW() WHERE id=$1 AND organization_id=$2 AND status IN ('QUEUED','SCHEDULED','FAILED')", postID, TenantFromContext(ctx).OrganizationID)
-	return affected(res, err)
-}
-func (s *PostgresStore) MarkPostPublished(ctx context.Context, postID, externalPostID string, publishedAt time.Time) error {
-	if err := requireOrganization(ctx); err != nil {
-		return err
-	}
-	res, err := s.db.ExecContext(ctx, "UPDATE posts SET status='PUBLISHED',external_post_id=$1,published_at=$2,last_error_code=0,last_error_message='',updated_at=NOW() WHERE id=$3 AND organization_id=$4", externalPostID, publishedAt, postID, TenantFromContext(ctx).OrganizationID)
 	return affected(res, err)
 }
 func (s *PostgresStore) MarkPostFailedOrRetry(ctx context.Context, postID string, retryCount int, nextRetryAt *time.Time, finalStatus string, errCode int, errMsg string) error {
@@ -1496,6 +1497,7 @@ type InMemoryStore struct {
 	channels                map[string]*domain.Channel
 	posts                   map[string]*domain.Post
 	batches                 map[string]*domain.PostBatch
+	library                 map[string]*domain.LibraryItem
 	postApprovals           map[string][]domain.PostApproval // post.ID -> []PostApproval
 	logs                    map[string][]domain.PublishLog
 	media                   map[string]*domain.MediaAsset
@@ -1516,6 +1518,7 @@ func NewInMemoryStore() *InMemoryStore {
 		channels:                make(map[string]*domain.Channel),
 		posts:                   make(map[string]*domain.Post),
 		batches:                 make(map[string]*domain.PostBatch),
+		library:                 make(map[string]*domain.LibraryItem),
 		postApprovals:           make(map[string][]domain.PostApproval),
 		logs:                    make(map[string][]domain.PublishLog),
 		media:                   make(map[string]*domain.MediaAsset),
@@ -1704,6 +1707,11 @@ func (m *InMemoryStore) DeleteChannel(ctx context.Context, id string) error {
 			delete(m.posts, postID)
 		}
 	}
+	for _, item := range m.library { // mirrors library_items.channel_id ON DELETE SET NULL
+		if item.ChannelID == id && item.OrganizationID == c.OrganizationID {
+			item.ChannelID = ""
+		}
+	}
 	for groupID, items := range m.channelGroupItems {
 		var filtered []string
 		for _, item := range items {
@@ -1863,27 +1871,6 @@ func (m *InMemoryStore) MarkPostProcessing(ctx context.Context, postID string) e
 	}
 
 	p.Status = domain.PostStatusProcessing
-	p.UpdatedAt = time.Now().UTC()
-	return nil
-}
-
-func (m *InMemoryStore) MarkPostPublished(ctx context.Context, postID string, externalPostID string, publishedAt time.Time) error {
-	if err := requireOrganization(ctx); err != nil {
-		return err
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	p, ok := m.posts[postID]
-	if !ok || p.OrganizationID != TenantFromContext(ctx).OrganizationID {
-		return errors.New("post not found")
-	}
-	p.Status = domain.PostStatusPublished
-	p.ExternalPostID = externalPostID
-	p.PublishedAt = &publishedAt
-	p.LastErrorCode = 0
-	p.LastErrorMessage = ""
 	p.UpdatedAt = time.Now().UTC()
 	return nil
 }

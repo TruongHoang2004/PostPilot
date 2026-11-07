@@ -6,6 +6,7 @@ Các HTTP Handlers trong `internal/api/` được phân tách rõ ràng theo t�
 - `system_handler.go`: `/healthz`, `/api/v1/stats`
 - `channel_handler.go`: `/api/v1/channels`, `/api/v1/channels/{id}`, `/api/v1/channels/{id}/verify-token`
 - `publishing_handler.go`: `/api/v1/posts` (GET có `from/to/channel_id/batch_id/limit/offset`, POST), `/api/v1/posts/bulk`, `/api/v1/posts/bulk/preview`, `/api/v1/posts/{id}` (GET, PATCH), `/api/v1/posts/{id}/publish-now`, `/api/v1/posts/{id}/cancel`, `/api/v1/posts/{id}/submit-approval`, `/api/v1/posts/{id}/review`, `/api/v1/posts/batches/{id}`
+- `library_handler.go`: `/api/v1/library` (GET, POST), `/api/v1/library/{id}` (GET, PATCH, DELETE), `/api/v1/library/{id}/restore`, `/api/v1/library/{id}/schedule`
 - `facebook_handler.go`: `/api/v1/auth/facebook/*`, `/api/v1/webhooks/facebook`
 - `media_handler.go`: `/api/v1/media/presign`, `/api/v1/media/upload`, `/api/v1/media`
 - `ai_handler.go`: `/api/v1/ai/generate`
@@ -19,6 +20,8 @@ Kiểm tra trạng thái kết nối của API Server, Redis Queue và độ sâ
 ```bash
 curl -s http://localhost:8080/healthz
 ```
+
+Phản hồi có thêm `storage_provider` (`s3` hoặc `r2`) và `storage_configured` (`false` nghĩa là upload media đang trả 503 cho đến khi cấu hình đủ). Không trả về bất kỳ giá trị bí mật nào.
 
 ### `GET /api/v1/stats`
 Lấy số liệu thống kê tổng quan (`total_channels`, `active_channels`, `scheduled_posts`, `queued_posts`, `published_posts`, `failed_posts`, `fast_queue_depth`, `heavy_queue_depth`).
@@ -180,10 +183,46 @@ curl -X POST http://localhost:8080/api/v1/posts/<POST_UUID>/cancel
 
 ---
 
+## 3b. Bài soạn sẵn (Content Library) & Lên lịch từ lịch (`library_handler.go`)
+
+Bài soạn sẵn là nội dung dùng lại được, gắn tuỳ chọn với một Fanpage. **Lên lịch sao chép** nội dung thành bài đăng thường (`posts`), nên sửa/xoá bài soạn sẵn sau đó không làm đổi bài đã lên lịch. Mọi truy vấn đều giới hạn theo `organization_id`; id của tổ chức khác luôn trả `404`.
+
+| Endpoint | Mô tả |
+| --- | --- |
+| `GET /api/v1/library?archived=&channel_id=&q=&limit=&offset=` | `archived=false` (mặc định) = mục **Bài soạn sẵn**; `archived=true` = mục **Đã đăng** (xoá mềm). `limit` ≤ 100. Trả `{items, limit, offset, has_more}`. |
+| `POST /api/v1/library` | Tạo: `{title, channel_id?, content, link_url, media_type, media_urls}` (cùng luật nội dung như bài đăng). `201`. |
+| `GET /api/v1/library/{id}` | Chi tiết. |
+| `PATCH /api/v1/library/{id}` | Sửa các trường gửi lên; mục đã xoá mềm trả `409`. `channel_id: ""` bỏ gắn Fanpage. |
+| `DELETE /api/v1/library/{id}` | Xoá **vĩnh viễn**. Các bài đã lên lịch từ mục này vẫn được giữ (`library_item_id` về rỗng). |
+| `POST /api/v1/library/{id}/restore` | "Giữ lại": đưa mục từ **Đã đăng** về **Bài soạn sẵn** và **bỏ cờ `delete_after_publish` của các bài đang chờ đăng** thuộc mục này (cùng giao dịch), để quyết định giữ lại không bị bài khác hoàn tác. |
+| `POST /api/v1/library/{id}/schedule` | Lên lịch từ bài soạn sẵn (xem dưới). |
+
+Quyền: OWNER/ADMIN luôn được. Tạo/sửa/xoá/khôi phục cần vai trò MANAGER/APPROVER/EDITOR trên Fanpage gắn kèm (hoặc trên ít nhất một Fanpage nếu mục không gắn Fanpage); VIEWER chỉ đọc (`403` khi ghi). **Lên lịch** do quyền trên các Fanpage đích quyết định (như `POST /posts`); riêng khi đặt `delete_after_publish: true` còn cần quyền soạn bài trên Fanpage gắn kèm của mục (vì cờ này sẽ xoá mềm mục đó). Danh sách chỉ gồm mục của Fanpage người dùng được xem, cộng mục không gắn Fanpage nếu người dùng xem được ít nhất một Fanpage.
+
+Xoá một Fanpage **không xoá** bài soạn sẵn gắn với nó: mục trở thành "mọi Fanpage" (`channel_id` về rỗng, `ON DELETE SET NULL`) và từ đó hiển thị theo quy tắc của mục không gắn Fanpage.
+
+### `POST /api/v1/library/{id}/schedule`
+```bash
+curl -X POST http://localhost:8080/api/v1/library/<ITEM_ID>/schedule \
+  -H "Content-Type: application/json" -H "Authorization: Bearer <TOKEN>" \
+  -d '{
+    "channel_ids": ["<CHANNEL_UUID>"],
+    "scheduled_at": "2026-11-20T09:00:00+07:00",
+    "delete_after_publish": true
+  }'
+```
+- `scheduled_at` bắt buộc (RFC3339); `publish_now` bị từ chối (`400`). Bỏ trống mục tiêu thì dùng Fanpage gắn kèm của bài soạn sẵn.
+- Dùng đúng luật của `POST /posts`: Editor trên nhóm cần duyệt → bài vào `PENDING_APPROVAL`; nhiều Fanpage/nhóm → một lô `FANOUT`.
+- `delete_after_publish: true`: khi **bài đăng đầu tiên mang cờ này đăng thành công**, mục bài soạn sẵn được **xoá mềm** (`archived_at`) sang mục **Đã đăng** (cùng giao dịch với `MarkPostPublished`, đăng lại không đếm trùng). Không đặt cờ: mục vẫn ở thư viện, chỉ tăng `publish_count`/`last_published_at`.
+- Phản hồi `201`: `{count, posts}` (thêm `batch_id` chỉ khi nhiều Fanpage/nhóm tạo lô `FANOUT`); mỗi post có `library_item_id` và `delete_after_publish`. Mục đã xoá mềm trả `409`.
+- Khi `MarkPostPublished` ghi nhận đã đăng, việc cập nhật bài soạn sẵn chạy trong savepoint: nếu phần này lỗi thì bài **vẫn là `PUBLISHED`** (chỉ ghi cảnh báo), vì bài đã lên Facebook.
+
 ## 4. Upload Media (`media_handler.go`) & AI Content (`ai_handler.go`)
 
+> **Nhà cung cấp lưu trữ:** `STORAGE_PROVIDER=s3` (mặc định, MinIO/AWS S3 qua `S3_*`) hoặc `r2` (Cloudflare R2 qua `R2_*`, xem [DEPLOY_VPS.md](DEPLOY_VPS.md#cloudflare-r2-tùy-chọn)). Khi chưa cấu hình đủ, cả hai endpoint dưới đây trả `503 {"error":"object storage is not configured"}` và API vẫn chạy bình thường.
+
 ### `POST /api/v1/media/upload`
-Upload trực tiếp file ảnh/video qua `multipart/form-data` (lưu local `./uploads` và đồng bộ lên MinIO/S3).
+Upload trực tiếp file ảnh/video qua `multipart/form-data` lên kho đối tượng (MinIO/S3/Cloudflare R2). **Không có fallback lưu local**: lỗi hoặc chưa cấu hình thì trả lỗi (`502`/`503`).
 
 ### `POST /api/v1/media/presign`
 Sinh đường dẫn Presigned PUT URL chuẩn AWS Signature V4 để Frontend/Client đẩy thẳng file ảnh hoặc video lên MinIO / AWS S3 / Cloudflare R2.

@@ -1,6 +1,6 @@
 import { Post, PostStatus } from "./types";
 
-export type ScheduleRange = "day" | "week" | "all";
+export type ScheduleRange = "day" | "week" | "month" | "all";
 export const postStatusLabels: Record<PostStatus, string> = {
   DRAFT: "Bản nháp", PENDING_APPROVAL: "Chờ duyệt", SCHEDULED: "Đã lên lịch", QUEUED: "Trong hàng đợi",
   PROCESSING: "Đang đăng", PUBLISHED: "Đã đăng", FAILED: "Đăng thất bại", REJECTED: "Bị từ chối", CANCELLED: "Đã hủy",
@@ -17,8 +17,18 @@ export function dateFromKey(value: string): Date {
 export function postDate(post: Post): Date {
   return new Date(post.status === "PUBLISHED" && post.published_at ? post.published_at : post.scheduled_at || post.created_at);
 }
+/** Days shown by the month board: six Monday-first weeks. */
+export const MONTH_GRID_DAYS = 42;
 export function rangeBounds(dateKey: string, range: ScheduleRange): { start: Date; end: Date } {
   const start = dateFromKey(dateKey);
+  if (range === "month") {
+    // The month board is a 6-week Monday-first grid, so load every day it shows (incl. adjacent months).
+    start.setDate(1);
+    start.setDate(1 - (start.getDay() + 6) % 7);
+    const end = new Date(start);
+    end.setDate(start.getDate() + MONTH_GRID_DAYS);
+    return { start, end };
+  }
   if (range === "week") start.setDate(start.getDate() - (start.getDay() + 6) % 7);
   const end = new Date(start);
   end.setDate(start.getDate() + (range === "week" ? 7 : 1));
@@ -167,4 +177,82 @@ export function suggestSlots(posts: Post[], channelIds: string[], slots: string[
     }
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Month calendar + click-to-schedule helpers (pure, unit-tested)
+// ---------------------------------------------------------------------------
+/** The 42 local date keys (Monday first) of the month board that contains dateKey. */
+export function monthGrid(dateKey: string): string[] {
+  const { start } = rangeBounds(dateKey, "month");
+  return Array.from({ length: MONTH_GRID_DAYS }, (_, i) => {
+    const day = new Date(start);
+    day.setDate(start.getDate() + i);
+    return localDateKey(day);
+  });
+}
+
+/** True when dateKey is in the same calendar month as the anchor key. */
+export function sameMonth(dateKey: string, anchorKey: string): boolean {
+  return dateKey.slice(0, 7) === anchorKey.slice(0, 7);
+}
+
+/** The first day of the month `delta` months away from dateKey. */
+export function shiftMonth(dateKey: string, delta: number): string {
+  const d = dateFromKey(dateKey);
+  return localDateKey(new Date(d.getFullYear(), d.getMonth() + delta, 1));
+}
+
+/** A day before today cannot receive a new schedule (publication time would already have passed). */
+export function isPastDay(dateKey: string, now: Date): boolean {
+  return dateKey < localDateKey(now);
+}
+
+/**
+ * Publication time pre-filled when a calendar day is clicked: the first preferred slot of that day that is
+ * still in the future and free of conflicts; otherwise the first future preferred slot; otherwise the next
+ * full hour (today) or the first slot (future days).
+ */
+export function defaultSlotForDay(dateKey: string, slots: string[], now: Date, posts: Post[], channelIds: string[], gapMinutes = 30): Date {
+  const preferred = (slots.length ? slots : DEFAULT_TIME_SLOTS).slice().sort();
+  const earliest = now.getTime() + 60000;
+  const future = preferred.map(slot => combineDateAndTime(dateKey, slot)).filter(at => at.getTime() >= earliest);
+  const free = future.find(at => !hasConflict(posts, channelIds, at, gapMinutes));
+  if (free) return free;
+  if (future.length) return future[0];
+  if (dateKey === localDateKey(now)) {
+    // Every preferred slot has passed: next full hour, but never leave the clicked day.
+    const next = new Date(now);
+    next.setMinutes(0, 0, 0);
+    next.setHours(next.getHours() + 1);
+    if (localDateKey(next) === dateKey) return next;
+    const soon = new Date(Math.ceil((now.getTime() + 5 * 60000) / (5 * 60000)) * 5 * 60000);
+    if (localDateKey(soon) === dateKey) return soon;
+    const tomorrow = dateFromKey(dateKey);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return combineDateAndTime(localDateKey(tomorrow), preferred[0] || "09:00");
+  }
+  return combineDateAndTime(dateKey, preferred[0] || "09:00");
+}
+
+/** Statuses in which a post can still publish (so a delete-after-publish promise is still open). */
+const PENDING_STATUSES: PostStatus[] = ["SCHEDULED", "PENDING_APPROVAL", "QUEUED", "PROCESSING", "FAILED"];
+
+/** True while the post will still soft-delete its library item after publishing (flag set, item still linked, not finished). */
+export function willDeleteAfterPublish(post: Post): boolean {
+  return Boolean(post.delete_after_publish && post.library_item_id && (PENDING_STATUSES as string[]).includes(post.status));
+}
+
+/** Quick status filters shown above the calendar ("" = every status). */
+export const STATUS_QUICK_FILTERS: { value: string; label: string }[] = [
+  { value: "", label: "Tất cả" }, { value: "SCHEDULED", label: "Đã lên lịch" }, { value: "PUBLISHED", label: "Đã đăng" },
+];
+
+/** Visual tone of a post chip by lifecycle status. */
+export function statusTone(status: string): "danger" | "success" | "warning" | "info" | "neutral" {
+  if (status === "FAILED" || status === "REJECTED") return "danger";
+  if (status === "PUBLISHED") return "success";
+  if (status === "PENDING_APPROVAL") return "warning";
+  if (["SCHEDULED", "QUEUED", "PROCESSING"].includes(status)) return "info";
+  return "neutral";
 }

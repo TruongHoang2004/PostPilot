@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Calendar, Clock, Send, Sparkles } from "lucide-react";
+import { BookmarkPlus, Calendar, Clock, Send, Sparkles } from "lucide-react";
 import { Channel, MediaType, Post } from "@/lib/types";
 import { api } from "@/lib/api";
 import { fromLocalInputValue, validateMedia } from "@/lib/schedule";
@@ -88,6 +88,21 @@ export function PostComposer({ channels, posts, onSuccess }: PostComposerProps) 
     } finally { setSubmitting(false); }
   };
 
+  /** Keeps the current content as a reusable library post (no Fanpage binding unless exactly one is chosen). */
+  const saveToLibrary = async () => {
+    if (!canCreatePost) { alert({ title: "Chưa thể lưu", message: "Vai trò hiện tại chỉ được xem, không tạo bài.", variant: "warning" }); return; }
+    const problem = uploading ? "Tệp đang tải lên, vui lòng đợi." : validateMedia(mediaType, urls, content);
+    if (problem) { alert({ title: "Chưa thể lưu", message: problem, variant: "warning" }); return; }
+    setSubmitting(true);
+    try {
+      await api.createLibraryItem({ channel_id: target.mode === "CHANNEL" ? target.channelId : "", content: content.trim(), media_type: mediaType, link_url: mediaType === "LINK" ? urls[0] : "", media_urls: mediaType !== "LINK" ? urls : [] });
+      const boundTo = target.mode === "CHANNEL" ? channels.find(c => c.id === target.channelId)?.name : "";
+      toast(`Đã lưu vào Bài soạn sẵn (${boundTo ? `dành cho Fanpage ${boundTo}` : "dùng cho mọi Fanpage"}). Bấm vào một ngày trên lịch để lên lịch.`, "success");
+    } catch (err) {
+      alert({ title: "Không lưu được bài soạn sẵn", message: err instanceof Error ? err.message : "Không xác định", variant: "danger" });
+    } finally { setSubmitting(false); }
+  };
+
   const previewName = targetLabel(target, channels, channelGroups);
   const when = fromLocalInputValue(scheduledAt);
   const disabled = submitting || uploading || !canCreatePost;
@@ -110,6 +125,7 @@ export function PostComposer({ channels, posts, onSuccess }: PostComposerProps) 
         <RetrySelect value={maxRetries} onChange={setMaxRetries} />
       </section>
       <div className="composer-actions">
+        <button type="button" className="dispatch-button" disabled={disabled} onClick={saveToLibrary}><BookmarkPlus size={16} />Lưu bài soạn sẵn</button>
         {isEditorOnApprovalGroup ? <button type="button" className="dispatch-button primary" disabled={disabled} onClick={() => handleSubmit(false, true)}><Clock size={16} />{submitting ? "Đang gửi…" : "Gửi duyệt"}</button> : <>
           <button type="button" className="dispatch-button" disabled={disabled} onClick={() => handleSubmit(false, true)}><Clock size={16} />Gửi duyệt</button>
           <button type="button" className="dispatch-button" disabled={disabled} onClick={() => handleSubmit(false, false)}><Calendar size={16} />{when ? "Lên lịch" : "Lưu lịch (giờ hiện tại)"}</button>

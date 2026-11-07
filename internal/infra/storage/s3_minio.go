@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,8 @@ import (
 // S3Service generates AWS Signature V4 presigned PUT URLs
 // compatible with MinIO (local Docker), AWS S3, and Cloudflare R2.
 type S3Service struct {
+	Provider      string // ProviderS3 or ProviderR2; informational, selects the setting names in Problems()
+	extraProblems []string
 	Endpoint      string
 	PublicBaseURL string
 	Region        string
@@ -135,6 +138,12 @@ func (s *S3Service) Upload(ctx context.Context, fileName, contentType string, da
 	client := &http.Client{Timeout: 600 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		// net/http embeds the full request URL (credential and signature in the query) in *url.Error;
+		// keep only the operation, host and cause so presigned URLs never reach the logs.
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = fmt.Errorf("%s %s: %w", urlErr.Op, req.URL.Host, urlErr.Err)
+		}
 		return "", "", fmt.Errorf("s3 put failed: %w", err)
 	}
 	defer resp.Body.Close()

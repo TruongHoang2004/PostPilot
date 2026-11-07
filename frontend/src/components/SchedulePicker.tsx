@@ -18,10 +18,11 @@ interface SchedulePickerProps {
   allowEmpty?: boolean;
   emptyHint?: string;
   label?: string;
+  pastNote?: string;                   // replaces the default past-time warning (callers that refuse past times)
 }
 
 /** Date/time picker with presets, preferred time slots and next-free-slot suggestions for the selected Fanpages. */
-export function SchedulePicker({ id, value, onChange, posts, channelIds, prefs, onPrefsChange, allowEmpty = true, emptyHint, label = "Thời gian đăng" }: SchedulePickerProps) {
+export function SchedulePicker({ id, value, onChange, posts, channelIds, prefs, onPrefsChange, allowEmpty = true, emptyHint, label = "Thời gian đăng", pastNote }: SchedulePickerProps) {
   const now = new Date();
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const selected = fromLocalInputValue(value);
@@ -47,7 +48,7 @@ export function SchedulePicker({ id, value, onChange, posts, channelIds, prefs, 
     </div>
     {suggestions.length > 0 && <div className="picker-suggest"><span className="dispatch-muted text-xs"><Sparkles size={13} aria-hidden="true" />Giờ trống gần nhất{channelIds.length ? " cho Fanpage đã chọn" : ""}:</span>
       <div className="chip-row" role="group" aria-label="Giờ trống gợi ý">{suggestions.map(d => <button key={d.getTime()} type="button" className="chip accent" aria-pressed={selected?.getTime() === d.getTime()} onClick={() => pick(d)}>{formatDateTimeShort(d)}</button>)}</div></div>}
-    {selected && isPast && <p className="dispatch-note warning"><AlertTriangle size={14} aria-hidden="true" />Thời gian đã qua: bài sẽ được đăng ngay ở lượt quét tiếp theo.</p>}
+    {selected && isPast && <p className="dispatch-note warning"><AlertTriangle size={14} aria-hidden="true" />{pastNote || "Thời gian đã qua: bài sẽ được đăng ngay ở lượt quét tiếp theo."}</p>}
     {selected && !isPast && conflict && <p className="dispatch-note warning"><AlertTriangle size={14} aria-hidden="true" />Cách bài “{(conflict.content || "không có văn bản").slice(0, 40)}” dưới {prefs.minGapMinutes} phút trên cùng Fanpage.</p>}
     {!selected && allowEmpty && <p className="dispatch-note">{emptyHint || "Chưa hẹn giờ: “Lên lịch” sẽ dùng thời điểm hiện tại, “Đăng ngay” đưa bài vào hàng đợi lập tức."}</p>}
     {onPrefsChange && <details className="picker-prefs"><summary>Khung giờ ưa thích ({prefs.timeSlots.join(", ")})</summary>

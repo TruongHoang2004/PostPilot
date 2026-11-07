@@ -25,15 +25,21 @@ func (s *Server) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 		status = "unhealthy"
 		code = http.StatusServiceUnavailable
 	}
+	storageProvider := ""
+	if s.s3 != nil {
+		storageProvider = s.s3.Provider
+	}
 	writeJSON(w, code, map[string]any{
-		"database_ok":       dbErr == nil,
-		"status":            status,
-		"service":           "postpilot-api",
-		"redis_mode":        redisMode,
-		"redis_ok":          redisErr == nil,
-		"fast_queue_depth":  fastDepth,
-		"heavy_queue_depth": heavyDepth,
-		"timestamp":         time.Now().UTC(),
+		"storage_provider":   storageProvider,
+		"storage_configured": s.s3.Configured(),
+		"database_ok":        dbErr == nil,
+		"status":             status,
+		"service":            "postpilot-api",
+		"redis_mode":         redisMode,
+		"redis_ok":           redisErr == nil,
+		"fast_queue_depth":   fastDepth,
+		"heavy_queue_depth":  heavyDepth,
+		"timestamp":          time.Now().UTC(),
 	})
 }
 
