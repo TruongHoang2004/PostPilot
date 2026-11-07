@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -55,7 +56,11 @@ func (s *S3Service) GeneratePresignedPutURL(fileName string, expiresSeconds int)
 	dateStamp := now.Format("20060102")
 
 	cleanName := path.Base(strings.ReplaceAll(fileName, " ", "_"))
-	storageKey := fmt.Sprintf("uploads/%s/%d_%s", dateStamp, now.UnixMilli(), cleanName)
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return nil, err
+	}
+	storageKey := fmt.Sprintf("uploads/%s/%x_%s", dateStamp, nonce, cleanName)
 
 	parsedEndpoint, err := url.Parse(s.Endpoint)
 	if err != nil {
@@ -63,7 +68,7 @@ func (s *S3Service) GeneratePresignedPutURL(fileName string, expiresSeconds int)
 	}
 
 	host := parsedEndpoint.Host
-	canonicalURI := fmt.Sprintf("/%s/%s", s.Bucket, storageKey)
+	canonicalURI := "/" + escapeObjectPath(s.Bucket) + "/" + escapeObjectPath(storageKey)
 	credentialScope := fmt.Sprintf("%s/%s/s3/aws4_request", dateStamp, s.Region)
 	credential := fmt.Sprintf("%s/%s", s.AccessKey, credentialScope)
 
@@ -99,7 +104,7 @@ func (s *S3Service) GeneratePresignedPutURL(fileName string, expiresSeconds int)
 	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
 
 	uploadURL := fmt.Sprintf("%s%s?%s&X-Amz-Signature=%s", s.Endpoint, canonicalURI, canonicalQueryString, signature)
-	publicURL := fmt.Sprintf("%s/%s", s.PublicBaseURL, storageKey)
+	publicURL := fmt.Sprintf("%s/%s", s.PublicBaseURL, escapeObjectPath(storageKey))
 
 	return &PresignedUploadResult{
 		StorageKey: storageKey,
@@ -159,4 +164,13 @@ func getSignatureKey(secret, dateStamp, regionName, serviceName string) []byte {
 	kService := hmacSHA256(kRegion, []byte(serviceName))
 	kSigning := hmacSHA256(kService, []byte("aws4_request"))
 	return kSigning
+}
+
+// S3 signs RFC3986-encoded path segments; object keys in metadata stay unescaped.
+func escapeObjectPath(raw string) string {
+	segments := strings.Split(raw, "/")
+	for i, part := range segments {
+		segments[i] = strings.ReplaceAll(url.QueryEscape(part), "+", "%20")
+	}
+	return strings.Join(segments, "/")
 }

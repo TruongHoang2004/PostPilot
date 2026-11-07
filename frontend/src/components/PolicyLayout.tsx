@@ -41,7 +41,7 @@ export function PolicyLayout({
         <h1 className="text-3xl font-bold leading-tight tracking-tight text-slate-950 dark:text-white sm:text-4xl">{title}</h1>
         <p className="mt-4 text-base leading-7 text-slate-600 dark:text-slate-400">{description}</p>
         <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
-          Cập nhật: <time dateTime="2026-10-25">25/10/2026</time>
+          Cập nhật: <time dateTime="2026-10-28">28/10/2026</time>
         </p>
         <article className="mt-8 space-y-8 border-t border-slate-200 pt-8 text-base leading-7 dark:border-slate-800 [&_h2]:mb-3 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:text-slate-950 dark:[&_h2]:text-white [&_p+p]:mt-3 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:space-y-3 [&_ol]:pl-6">
           {children}

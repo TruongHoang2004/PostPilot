@@ -1,8 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -18,6 +21,14 @@ func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+
+	visible := make([]domain.Channel, 0, len(channels))
+	for _, channel := range channels {
+		if role, ok := s.resolveChannelPermission(ctx, channel.ID); ok && domain.CanViewChannel(role) {
+			visible = append(visible, channel)
+		}
+	}
+	channels = visible
 
 	for i := range channels {
 		if rawTok, err := s.cipher.Decrypt(channels[i].EncryptedAccessToken); err == nil {
@@ -90,6 +101,11 @@ func (s *Server) handleUpsertChannel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := s.verifyPageIdentity(r.Context(), finalToken, req.ExternalID); err != nil {
+		writeJSON(w, 400, map[string]any{"error": err.Error()})
+		return
+	}
+
 	encryptedToken, err := s.cipher.Encrypt(finalToken)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "encrypt token failed: " + err.Error()})
@@ -143,7 +159,7 @@ func (s *Server) handleVerifyChannelToken(w http.ResponseWriter, r *http.Request
 		_ = s.store.UpdateChannelTokenStatus(ctx, channel.ID, domain.TokenStatusExpired, now)
 		errMsg := "token invalid"
 		if err != nil {
-			errMsg = err.Error()
+			errMsg = "token verification unavailable; check connection and retry"
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"channel_id":   channel.ID,
@@ -198,4 +214,19 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 		"message":    "Channel deleted successfully",
 		"channel_id": channelID,
 	})
+}
+
+func (s *Server) verifyPageIdentity(ctx context.Context, token, pageID string) error {
+	if s.fbClient == nil {
+		return fmt.Errorf("Facebook integration is not configured")
+	}
+	identity, _, err := s.fbClient.Get(ctx, "me", url.Values{"fields": {"id,name"}, "access_token": {token}})
+	if err != nil {
+		return fmt.Errorf("cannot verify Facebook Page token; reconnect the Page")
+	}
+	id, _ := identity["id"].(string)
+	if id == "" || id != pageID {
+		return fmt.Errorf("access token does not belong to the selected Facebook Page")
+	}
+	return nil
 }

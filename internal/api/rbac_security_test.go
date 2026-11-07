@@ -14,7 +14,7 @@ import (
 
 // TestRBACEnforcementMatrix tests authorization checks for VIEWER, EDITOR, and APPROVER roles.
 func TestRBACEnforcementMatrix(t *testing.T) {
-	_, handler, store := setupTestServer(t)
+	srv, handler, store := setupTestServer(t)
 
 	// Create test organization
 	ctx := domain.WithTenantContext(t.Context(), domain.DefaultTenantContext())
@@ -49,18 +49,18 @@ func TestRBACEnforcementMatrix(t *testing.T) {
 	// Test 1a: VIEWER cannot create post -> 403 Forbidden
 	viewerPostPayload := fmt.Sprintf(`{"channel_id":"%s","content":"Viewer attempting to post"}`, ch.ID)
 	reqViewerPost := httptest.NewRequest(http.MethodPost, "/api/v1/posts", bytes.NewBufferString(viewerPostPayload))
-	reqViewerPost.Header.Set("X-Simulate-Role", "VIEWER")
+	authenticateTestRole(t, srv, reqViewerPost, "VIEWER", "")
 	recViewerPost := httptest.NewRecorder()
-	handler.ServeHTTP(recViewerPost, reqViewerPost)
+	serveTest(t, srv, handler, recViewerPost, reqViewerPost)
 	if recViewerPost.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden for VIEWER creating post, got %d: %s", recViewerPost.Code, recViewerPost.Body.String())
 	}
 
 	// Test 1b: VIEWER cannot create channel group -> 403 Forbidden
 	reqViewerGroup := httptest.NewRequest(http.MethodPost, "/api/v1/channel-groups", bytes.NewBufferString(`{"name":"Viewer Group"}`))
-	reqViewerGroup.Header.Set("X-Simulate-Role", "VIEWER")
+	authenticateTestRole(t, srv, reqViewerGroup, "VIEWER", "")
 	recViewerGroup := httptest.NewRecorder()
-	handler.ServeHTTP(recViewerGroup, reqViewerGroup)
+	serveTest(t, srv, handler, recViewerGroup, reqViewerGroup)
 	if recViewerGroup.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden for VIEWER creating channel group, got %d", recViewerGroup.Code)
 	}
@@ -72,9 +72,9 @@ func TestRBACEnforcementMatrix(t *testing.T) {
 	// Test 2a: EDITOR attempting publish_now on approval-required channel -> 403 Forbidden
 	editorDirectPayload := fmt.Sprintf(`{"channel_id":"%s","content":"Editor Direct Post","publish_now":true}`, ch.ID)
 	reqEditorDirect := httptest.NewRequest(http.MethodPost, "/api/v1/posts", bytes.NewBufferString(editorDirectPayload))
-	reqEditorDirect.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqEditorDirect, "EDITOR", "")
 	recEditorDirect := httptest.NewRecorder()
-	handler.ServeHTTP(recEditorDirect, reqEditorDirect)
+	serveTest(t, srv, handler, recEditorDirect, reqEditorDirect)
 	if recEditorDirect.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden for EDITOR direct publish_now on approval channel, got %d: %s", recEditorDirect.Code, recEditorDirect.Body.String())
 	}
@@ -82,9 +82,9 @@ func TestRBACEnforcementMatrix(t *testing.T) {
 	// Test 2b: EDITOR creating post with submit_for_approval: true -> succeeds, status PENDING_APPROVAL
 	editorApprovalPayload := fmt.Sprintf(`{"channel_id":"%s","content":"Editor Post for Approval","submit_for_approval":true}`, ch.ID)
 	reqEditorAppr := httptest.NewRequest(http.MethodPost, "/api/v1/posts", bytes.NewBufferString(editorApprovalPayload))
-	reqEditorAppr.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqEditorAppr, "EDITOR", "")
 	recEditorAppr := httptest.NewRecorder()
-	handler.ServeHTTP(recEditorAppr, reqEditorAppr)
+	serveTest(t, srv, handler, recEditorAppr, reqEditorAppr)
 	if recEditorAppr.Code != http.StatusCreated {
 		t.Fatalf("expected 201 Created for EDITOR submitting for approval, got %d: %s", recEditorAppr.Code, recEditorAppr.Body.String())
 	}
@@ -97,9 +97,9 @@ func TestRBACEnforcementMatrix(t *testing.T) {
 	// Test 2c: EDITOR attempting to review post -> 403 Forbidden
 	reviewPayload := `{"action":"APPROVED","note":"Self-approval attempt"}`
 	reqEditorReview := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/posts/%s/review", createdPost.ID), bytes.NewBufferString(reviewPayload))
-	reqEditorReview.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqEditorReview, "EDITOR", "")
 	recEditorReview := httptest.NewRecorder()
-	handler.ServeHTTP(recEditorReview, reqEditorReview)
+	serveTest(t, srv, handler, recEditorReview, reqEditorReview)
 	if recEditorReview.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden for EDITOR attempting to review post, got %d: %s", recEditorReview.Code, recEditorReview.Body.String())
 	}
@@ -111,9 +111,9 @@ func TestRBACEnforcementMatrix(t *testing.T) {
 	// Test 3a: APPROVER rejects post with feedback note -> 200 OK, status REJECTED
 	rejectPayload := `{"action":"REJECTED","note":"Please update the tone to match corporate style guide."}`
 	reqApproverReject := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/posts/%s/review", createdPost.ID), bytes.NewBufferString(rejectPayload))
-	reqApproverReject.Header.Set("X-Simulate-Role", "APPROVER")
+	authenticateTestRole(t, srv, reqApproverReject, "APPROVER", "")
 	recApproverReject := httptest.NewRecorder()
-	handler.ServeHTTP(recApproverReject, reqApproverReject)
+	serveTest(t, srv, handler, recApproverReject, reqApproverReject)
 	if recApproverReject.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK for APPROVER rejecting post, got %d: %s", recApproverReject.Code, recApproverReject.Body.String())
 	}
@@ -130,9 +130,9 @@ func TestRBACEnforcementMatrix(t *testing.T) {
 
 	// Test 3b: VIEWER attempting submit-approval -> 403 Forbidden
 	reqViewerResubmit := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/posts/%s/submit-approval", createdPost.ID), bytes.NewBufferString(`{"content":"Viewer edit"}`))
-	reqViewerResubmit.Header.Set("X-Simulate-Role", "VIEWER")
+	authenticateTestRole(t, srv, reqViewerResubmit, "VIEWER", "")
 	recViewerResubmit := httptest.NewRecorder()
-	handler.ServeHTTP(recViewerResubmit, reqViewerResubmit)
+	serveTest(t, srv, handler, recViewerResubmit, reqViewerResubmit)
 	if recViewerResubmit.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 Forbidden for VIEWER attempting submit-approval, got %d", recViewerResubmit.Code)
 	}
@@ -141,9 +141,9 @@ func TestRBACEnforcementMatrix(t *testing.T) {
 	futureTime := time.Now().UTC().Add(3 * time.Hour).Format(time.RFC3339)
 	resubmitPayload := fmt.Sprintf(`{"content":"Revised Content: Professional and aligned with style guide.","scheduled_at":"%s"}`, futureTime)
 	reqEditorResubmit := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/posts/%s/submit-approval", createdPost.ID), bytes.NewBufferString(resubmitPayload))
-	reqEditorResubmit.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqEditorResubmit, "EDITOR", "")
 	recEditorResubmit := httptest.NewRecorder()
-	handler.ServeHTTP(recEditorResubmit, reqEditorResubmit)
+	serveTest(t, srv, handler, recEditorResubmit, reqEditorResubmit)
 	if recEditorResubmit.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK for EDITOR resubmitting post, got %d: %s", recEditorResubmit.Code, recEditorResubmit.Body.String())
 	}
@@ -160,9 +160,9 @@ func TestRBACEnforcementMatrix(t *testing.T) {
 	// Test 3d: APPROVER approves the revised post -> 200 OK, status SCHEDULED (future)
 	approvePayload := `{"action":"APPROVED","note":"Approved. Looks great!"}`
 	reqApproverApprove := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/posts/%s/review", createdPost.ID), bytes.NewBufferString(approvePayload))
-	reqApproverApprove.Header.Set("X-Simulate-Role", "APPROVER")
+	authenticateTestRole(t, srv, reqApproverApprove, "APPROVER", "")
 	recApproverApprove := httptest.NewRecorder()
-	handler.ServeHTTP(recApproverApprove, reqApproverApprove)
+	serveTest(t, srv, handler, recApproverApprove, reqApproverApprove)
 	if recApproverApprove.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK for APPROVER approving post, got %d: %s", recApproverApprove.Code, recApproverApprove.Body.String())
 	}
@@ -176,7 +176,7 @@ func TestRBACEnforcementMatrix(t *testing.T) {
 
 // TestBatchFanOutAndBatchReview tests multi-channel fan-out post creation and batch approval / rejection.
 func TestBatchFanOutAndBatchReview(t *testing.T) {
-	_, handler, store := setupTestServer(t)
+	srv, handler, store := setupTestServer(t)
 	ctx := domain.WithTenantContext(t.Context(), domain.DefaultTenantContext())
 
 	// Create 2 Channels
@@ -229,9 +229,9 @@ func TestBatchFanOutAndBatchReview(t *testing.T) {
 	}`, cg.ID, futureTime)
 
 	reqFanout := httptest.NewRequest(http.MethodPost, "/api/v1/posts", bytes.NewBufferString(fanoutPayload))
-	reqFanout.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqFanout, "EDITOR", "")
 	recFanout := httptest.NewRecorder()
-	handler.ServeHTTP(recFanout, reqFanout)
+	serveTest(t, srv, handler, recFanout, reqFanout)
 
 	if recFanout.Code != http.StatusCreated {
 		t.Fatalf("expected 201 Created for fan-out post creation, got %d: %s", recFanout.Code, recFanout.Body.String())
@@ -264,9 +264,9 @@ func TestBatchFanOutAndBatchReview(t *testing.T) {
 	// Step 2: APPROVER calls /review on Post 1 with apply_to_batch: true -> both posts transition to SCHEDULED
 	batchApprovePayload := `{"action":"APPROVED","note":"Approved all channels in batch","apply_to_batch":true}`
 	reqBatchApprove := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/posts/%s/review", post1ID), bytes.NewBufferString(batchApprovePayload))
-	reqBatchApprove.Header.Set("X-Simulate-Role", "APPROVER")
+	authenticateTestRole(t, srv, reqBatchApprove, "APPROVER", "")
 	recBatchApprove := httptest.NewRecorder()
-	handler.ServeHTTP(recBatchApprove, reqBatchApprove)
+	serveTest(t, srv, handler, recBatchApprove, reqBatchApprove)
 
 	if recBatchApprove.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK for batch review, got %d: %s", recBatchApprove.Code, recBatchApprove.Body.String())
@@ -296,9 +296,9 @@ func TestBatchFanOutAndBatchReview(t *testing.T) {
 	}`, cg.ID, futureTime)
 
 	reqFanout2 := httptest.NewRequest(http.MethodPost, "/api/v1/posts", bytes.NewBufferString(fanoutPayload2))
-	reqFanout2.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqFanout2, "EDITOR", "")
 	recFanout2 := httptest.NewRecorder()
-	handler.ServeHTTP(recFanout2, reqFanout2)
+	serveTest(t, srv, handler, recFanout2, reqFanout2)
 
 	if recFanout2.Code != http.StatusCreated {
 		t.Fatalf("failed to create second fan-out batch: %d: %s", recFanout2.Code, recFanout2.Body.String())
@@ -313,9 +313,9 @@ func TestBatchFanOutAndBatchReview(t *testing.T) {
 	// Step 4: APPROVER rejects entire batch via apply_to_batch: true
 	batchRejectPayload := `{"action":"REJECTED","note":"Fix broken link in text before publishing","apply_to_batch":true}`
 	reqBatchReject := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/posts/%s/review", batch2Post1ID), bytes.NewBufferString(batchRejectPayload))
-	reqBatchReject.Header.Set("X-Simulate-Role", "APPROVER")
+	authenticateTestRole(t, srv, reqBatchReject, "APPROVER", "")
 	recBatchReject := httptest.NewRecorder()
-	handler.ServeHTTP(recBatchReject, reqBatchReject)
+	serveTest(t, srv, handler, recBatchReject, reqBatchReject)
 
 	if recBatchReject.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK for batch rejection, got %d: %s", recBatchReject.Code, recBatchReject.Body.String())
@@ -384,6 +384,7 @@ func TestChannelGroupRBACMostPermissiveWins(t *testing.T) {
 	}
 
 	// Assign Dave VIEWER on Group A
+	_, _ = store.AddOrganizationMember(ctx, &domain.OrganizationMember{OrganizationID: domain.DefaultOrganizationID, UserID: dave.ID, OrgRole: domain.OrgRoleMember})
 	_, err = store.SetChannelGroupPermission(ctx, &domain.ChannelGroupPermission{
 		ChannelGroupID: groupA.ID,
 		UserID:         dave.ID,
@@ -449,10 +450,10 @@ func TestChannelGroupRBACMostPermissiveWins(t *testing.T) {
 	// Dave makes request using real JWT with X-User-Id header simulation or resolved permission
 	postPayload := fmt.Sprintf(`{"channel_id":"%s","content":"Post by Dave as Editor/Approver","submit_for_approval":true}`, ch.ID)
 	reqDavePost := httptest.NewRequest(http.MethodPost, "/api/v1/posts", bytes.NewBufferString(postPayload))
-	reqDavePost.Header.Set("X-User-Id", dave.ID)
-	reqDavePost.Header.Set("X-Simulate-Role", "MEMBER") // member with group roles
+	authenticateTestRole(t, srv, reqDavePost, "MEMBER", dave.ID)
+	// member with group roles
 	recDavePost := httptest.NewRecorder()
-	handler.ServeHTTP(recDavePost, reqDavePost)
+	serveTest(t, srv, handler, recDavePost, reqDavePost)
 	if recDavePost.Code != http.StatusCreated {
 		t.Fatalf("expected Dave to be able to create post (resolved APPROVER/EDITOR), got %d: %s", recDavePost.Code, recDavePost.Body.String())
 	}

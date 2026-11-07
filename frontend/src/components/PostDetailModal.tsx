@@ -3,23 +3,38 @@
 import React, { useEffect, useState } from "react";
 import { Post, PublishLog } from "@/lib/types";
 import { api } from "@/lib/api";
-import { formatDate, formatBytes, getStatusBadgeClass } from "@/lib/utils";
-import { X, ExternalLink, Clock, AlertCircle, CheckCircle2, ShieldAlert, Film, Image as ImageIcon } from "lucide-react";
+import { formatDate } from "@/lib/utils";
+import { X, ExternalLink, Clock, AlertCircle, CheckCircle2, ShieldAlert, Pencil } from "lucide-react";
+import { useOrg } from "@/context/OrgContext";
+import { Modal } from "./Modal";
+import { PostStatusBadge } from "./PostStatusBadge";
+import { SchedulePicker } from "./SchedulePicker";
 import { useDialog } from "@/context/DialogContext";
+import { AUTHOR_ROLES, EDITABLE_STATUSES, fromLocalInputValue, toLocalInputValue } from "@/lib/schedule";
+import { loadSchedulePrefs } from "@/lib/preferences";
 
 interface PostDetailModalProps {
   postId: string | null;
   onClose: () => void;
   onRefresh: () => void;
+  /** Posts already loaded by the caller; used for conflict-aware reschedule suggestions. */
+  posts?: Post[];
 }
 
-export function PostDetailModal({ postId, onClose, onRefresh }: PostDetailModalProps) {
+export function PostDetailModal({ postId, onClose, onRefresh, posts = [] }: PostDetailModalProps) {
   const { confirm, alert, toast } = useDialog();
+  const { canManageOrg, channelRoles, currentOrg } = useOrg();
   const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [editContent, setEditContent] = useState("");
+  const [editAt, setEditAt] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [prefs] = useState(() => loadSchedulePrefs(currentOrg?.id || ""));
   const [post, setPost] = useState<Post | null>(null);
   const [logs, setLogs] = useState<PublishLog[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [actionMessage, setActionMessage] = useState("");
 
   useEffect(() => {
     if (!postId) return;
@@ -57,7 +72,7 @@ export function PostDetailModal({ postId, onClose, onRefresh }: PostDetailModalP
       const updated = await api.getPostDetail(post.id);
       setPost(updated.post);
       setLogs(updated.publish_logs || []);
-      toast("🚀 Đã kích hoạt đăng bài thành công!", "success");
+      setActionMessage(updated.post.status === "PUBLISHED" ? "Bài viết đã được đăng." : "Đã gửi yêu cầu. Xem trạng thái trong lịch đăng.");
       onRefresh();
     } catch (err: any) {
       alert({
@@ -74,7 +89,7 @@ export function PostDetailModal({ postId, onClose, onRefresh }: PostDetailModalP
     if (!post) return;
     const ok = await confirm({
       title: "Hủy bài viết",
-      message: "Bạn có chắc chắn muốn hủy bài viết này không? Trạng thái sẽ chuyển sang CANCELLED.",
+      message: "Bạn có chắc chắn muốn hủy bài viết này không? Bài sẽ không được đăng theo lịch này.",
       confirmText: "Hủy bài viết",
       variant: "danger",
     });
@@ -84,7 +99,7 @@ export function PostDetailModal({ postId, onClose, onRefresh }: PostDetailModalP
       await api.cancelPost(post.id);
       const updated = await api.getPostDetail(post.id);
       setPost(updated.post);
-      toast("Đã hủy bài đăng thành công", "success");
+      setActionMessage("Đã hủy lịch đăng bài viết.");
       onRefresh();
     } catch (err: any) {
       alert({
@@ -95,8 +110,29 @@ export function PostDetailModal({ postId, onClose, onRefresh }: PostDetailModalP
     }
   };
 
+  const role = post ? channelRoles[post.channel_id] : undefined;
+  const canAuthor = canManageOrg || AUTHOR_ROLES.includes(role || "");
+  const canPublish = canManageOrg || ["MANAGER", "APPROVER"].includes(role || "");
+  const publishEligible = post && ["DRAFT", "SCHEDULED", "FAILED"].includes(post.status);
+  const editable = post && EDITABLE_STATUSES.includes(post.status);
+  const startEditing = () => { if (!post) return; setEditContent(post.content); setEditAt(toLocalInputValue(new Date(post.scheduled_at))); setEditing(true); setActionMessage(""); };
+  const handleSave = async () => {
+    if (!post) return;
+    const when = fromLocalInputValue(editAt);
+    if (!when) { alert({ title: "Thiếu thời gian", message: "Chọn thời gian đăng hợp lệ.", variant: "warning" }); return; }
+    if (!editContent.trim() && (!post.media_urls || post.media_urls.length === 0)) { alert({ title: "Bài viết trống", message: "Bài cần nội dung hoặc tệp đính kèm.", variant: "warning" }); return; }
+    setSaving(true);
+    try {
+      const updated = await api.updatePost(post.id, { content: editContent, scheduled_at: when.toISOString() });
+      setPost(updated); setEditing(false);
+      setActionMessage(updated.status === "PENDING_APPROVAL" && post.status !== "PENDING_APPROVAL" ? "Đã lưu. Bài quay về chờ duyệt vì nội dung thay đổi." : post.status === "FAILED" ? "Đã đổi lịch; bài sẽ được thử đăng lại vào giờ mới." : "Đã lưu nội dung và thời gian mới.");
+      onRefresh();
+    } catch (err: any) {
+      alert({ title: "Không lưu được", message: err.message || "Không xác định", variant: "danger" });
+    } finally { setSaving(false); }
+  };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+    <Modal labelledBy="post-detail-heading" onClose={onClose}>
       <div
         className="relative w-full max-w-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
@@ -104,14 +140,13 @@ export function PostDetailModal({ postId, onClose, onRefresh }: PostDetailModalP
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50">
           <div className="flex items-center gap-3">
-            <span className="text-base font-bold text-slate-900 dark:text-white">Chi tiết Bài Viết & Nhật Ký Meta API</span>
+            <h2 id="post-detail-heading" className="text-base font-semibold text-slate-900 dark:text-white">Chi tiết bài viết</h2>
             {post && (
-              <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${getStatusBadgeClass(post.status)}`}>
-                {post.status}
-              </span>
+              <PostStatusBadge status={post.status} />
             )}
           </div>
           <button
+            aria-label="Đóng chi tiết bài viết"
             onClick={onClose}
             className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
@@ -182,15 +217,24 @@ export function PostDetailModal({ postId, onClose, onRefresh }: PostDetailModalP
                 </div>
               )}
 
+              {editing && <section className="dispatch-panel detail-edit" aria-label="Chỉnh sửa bài viết">
+                <div className="composer-row-head"><label className="composer-label" htmlFor="detail-edit-content">Nội dung</label><span className="dispatch-muted text-xs">{editContent.length} ký tự</span></div>
+                <textarea id="detail-edit-content" rows={6} value={editContent} onChange={e => setEditContent(e.target.value)} />
+                <SchedulePicker id="detail-edit-schedule" value={editAt} onChange={setEditAt} posts={posts.filter(p => p.id !== post.id)} channelIds={[post.channel_id]} prefs={prefs} allowEmpty={false} label="Thời gian đăng mới" />
+                {!canManageOrg && role === "EDITOR" && <p className="dispatch-note">Sửa nội dung trên Fanpage thuộc nhóm bắt buộc duyệt sẽ đưa bài về trạng thái chờ duyệt; chỉ đổi giờ thì giữ nguyên.</p>}
+                <div className="composer-actions"><button type="button" className="dispatch-button" onClick={() => setEditing(false)} disabled={saving}>Huỷ</button><button type="button" className="dispatch-button primary" onClick={handleSave} disabled={saving}>{saving ? "Đang lưu…" : "Lưu thay đổi"}</button></div>
+              </section>}
+
               {/* Post Caption / Content */}
-              <div>
+              {!editing && <div>
                 <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-2">
                   Nội dung bài viết
                 </label>
                 <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 text-sm text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed max-h-56 overflow-y-auto">
                   {post.content || <span className="text-slate-400 dark:text-slate-500 italic">Không có văn bản</span>}
                 </div>
-              </div>
+                {post.batch_name && <p className="dispatch-muted text-xs mt-2">Thuộc lô bài: {post.batch_name}</p>}
+              </div>}
 
               {/* Media Previews */}
               {post.media_urls && post.media_urls.length > 0 && (
@@ -226,11 +270,11 @@ export function PostDetailModal({ postId, onClose, onRefresh }: PostDetailModalP
               {/* Publish Logs History */}
               <div>
                 <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider block mb-2">
-                  Lịch sử thực thi Meta Graph API ({logs.length})
+                  Nhật ký đăng bài ({logs.length})
                 </label>
                 {logs.length === 0 ? (
                   <p className="text-xs text-slate-500 p-3 bg-slate-50 dark:bg-slate-950/40 rounded-xl border border-slate-200 dark:border-slate-800/60">
-                    Chưa có nhật ký thực thi nào. Bài viết sẽ được Worker tự động xử lý khi đến giờ hẹn hoặc khi bạn nhấn Đăng Ngay.
+                    Chưa có nhật ký đăng bài. Nhật ký sẽ xuất hiện sau khi hệ thống bắt đầu xử lý.
                   </p>
                 ) : (
                   <div className="space-y-2">
@@ -280,39 +324,45 @@ export function PostDetailModal({ postId, onClose, onRefresh }: PostDetailModalP
           ) : null}
         </div>
 
+        {actionMessage && <p role="status" className="px-6 py-3 text-sm dispatch-muted">{actionMessage}</p>}
         {/* Footer Actions */}
         {post && (
           <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-950/80 flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-2">
-              {(post.status === "SCHEDULED" || post.status === "FAILED") && (
+            <div className="flex items-center gap-2 flex-wrap">
+              {canAuthor && editable && !editing && (
+                <button onClick={startEditing} className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-all flex items-center gap-1.5">
+                  <Pencil className="h-3.5 w-3.5" /> Sửa / đổi lịch
+                </button>
+              )}
+              {canAuthor && (post.status === "SCHEDULED" || post.status === "FAILED") && (
                 <button
                   onClick={handleCancel}
                   className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-rose-600 dark:text-rose-400 border border-slate-200 dark:border-slate-700 hover:border-rose-500/30 transition-all"
                 >
-                  ✕ Hủy Lịch Đăng
+                  Hủy lịch đăng
                 </button>
               )}
             </div>
 
-            <div className="flex items-center gap-2">
+            {canPublish && publishEligible && <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => handlePublishNow(false)}
                 disabled={publishing}
                 className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white transition-all disabled:opacity-50"
               >
-                {publishing ? "Đang đẩy..." : "⚡ Đẩy vào Queue"}
+                {publishing ? "Đang đẩy..." : "Đưa vào hàng đợi"}
               </button>
               <button
                 onClick={() => handlePublishNow(true)}
                 disabled={publishing}
                 className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-50 flex items-center gap-1.5"
               >
-                {publishing ? "Đang xử lý..." : "🚀 Đăng Ngay Đồng Bộ"}
+                {publishing ? "Đang xử lý..." : "Đăng ngay"}
               </button>
-            </div>
+            </div>}
           </div>
         )}
       </div>
-    </div>
+    </Modal>
   );
 }

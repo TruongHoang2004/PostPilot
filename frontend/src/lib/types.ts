@@ -60,6 +60,7 @@ export interface Post {
   id: string;
   organization_id?: string;
   batch_id?: string;
+  batch_name?: string;
   channel_group_id?: string;
   channel_id: string;
   channel_name?: string;
@@ -69,7 +70,7 @@ export interface Post {
   content: string;
   link_url?: string;
   media_type: MediaType;
-  media_urls?: string[];
+  media_urls?: string[] | null;
   status: PostStatus;
   scheduled_at: string;
   published_at?: string;
@@ -81,7 +82,9 @@ export interface Post {
   max_retries: number;
   last_error_code?: number;
   last_error_message?: string;
+  next_retry_at?: string;
   queue_tier: 'FAST' | 'HEAVY';
+  created_by?: string;
   created_at: string;
   updated_at: string;
 }
@@ -227,4 +230,101 @@ export interface AuditLog {
   details?: any;
   ip_address?: string;
   created_at: string;
+}
+
+// Bulk composition & scheduling
+export interface SchedulePlan {
+  start_date: string;        // YYYY-MM-DD in timezone
+  timezone: string;          // IANA name
+  time_slots: string[];      // HH:MM local
+  weekdays: number[];        // 0 = Sunday … 6 = Saturday; empty = every day
+  min_gap_minutes: number;
+  avoid_conflicts: boolean;
+}
+
+export interface BulkItemInput {
+  content: string;
+  link_url?: string;
+  media_type: MediaType;
+  media_urls?: string[];
+  scheduled_at?: string;     // RFC3339; omitted = assigned from schedule_plan
+}
+
+export interface BulkRequest {
+  name?: string;
+  channel_id?: string;
+  channel_ids?: string[];
+  channel_group_id?: string;
+  items: BulkItemInput[];
+  schedule_plan?: SchedulePlan;
+  submit_for_approval?: boolean;
+  max_retries?: number;
+}
+
+export interface ScheduleSlot {
+  index: number;
+  scheduled_at: string;
+  explicit: boolean;
+  note_code?: 'CONFLICTS_SKIPPED' | 'PAST_TIME' | string;
+  note_value?: number;
+  note?: string;             // human-readable fallback
+}
+
+export interface NoteCode { code: string; value: number }
+
+export interface BulkPreviewChannel {
+  id: string;
+  name: string;
+  platform?: PlatformType;
+  require_approval: boolean;
+  role: GroupRole;
+}
+
+export interface BulkPreview {
+  schedule: ScheduleSlot[];
+  warnings: string[] | null;
+  warning_codes?: NoteCode[] | null;
+  channels: BulkPreviewChannel[];
+  schedule_plan?: SchedulePlan | null;
+  post_count: number;
+}
+
+export interface PostBatch {
+  id: string;
+  organization_id: string;
+  name: string;
+  kind: 'BULK' | 'FANOUT';
+  schedule_plan?: SchedulePlan;
+  item_count: number;
+  created_by: string;
+  created_at: string;
+}
+
+export interface BulkCreateResponse {
+  batch_id: string;
+  batch: PostBatch;
+  name: string;
+  count: number;
+  posts: Post[];
+  schedule: ScheduleSlot[] | null;
+}
+
+export interface PostPage { posts: Post[]; limit: number; offset: number; has_more: boolean }
+
+export interface PostQuery {
+  status?: string;
+  channel_id?: string;
+  batch_id?: string;
+  from?: string;             // RFC3339 inclusive
+  to?: string;               // RFC3339 exclusive
+  limit?: number;            // ≤ 500
+  offset?: number;
+}
+
+export interface PostPatch {
+  scheduled_at?: string;
+  content?: string;
+  link_url?: string;
+  media_type?: MediaType;
+  media_urls?: string[];
 }

@@ -170,7 +170,7 @@ func (c *Client) doRequest(req *http.Request, start time.Time) (map[string]any, 
 	var parsed map[string]any
 	_ = json.Unmarshal(respBytes, &parsed)
 
-	if resp.StatusCode >= 400 || (parsed != nil && parsed["error"] != nil) {
+	if (resp.StatusCode < 200 || resp.StatusCode >= 300) || (parsed != nil && parsed["error"] != nil) {
 		return nil, metrics, parseGraphError(resp.StatusCode, rawStr, parsed)
 	}
 

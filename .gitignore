@@ -42,4 +42,5 @@ certbot/
 .agents
 .aidlc
 agent-skills/
+skills/
 AGENTS.md

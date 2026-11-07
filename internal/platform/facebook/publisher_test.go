@@ -199,3 +199,41 @@ func TestPublisherAdapter(t *testing.T) {
 		t.Fatalf("expected external post ID 123456_fb_feed_999, got %s", res.ExternalPostID)
 	}
 }
+
+func TestHostedReelUsesReturnedUploadURL(t *testing.T) {
+	uploaded := false
+	client := newMockClient(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Host == "rupload.facebook.com" {
+			if r.URL.Path != "/video-upload/v20.0/video-123" || r.Header.Get("file_url") != "https://cdn.example.com/reel.mp4" || r.Header.Get("Authorization") != "OAuth test-token" {
+				t.Errorf("incorrect Reel upload request: %s", r.URL)
+			}
+			uploaded = true
+			_, _ = w.Write([]byte(`{"success":true}`))
+			return
+		}
+		_ = r.ParseForm()
+		if r.FormValue("upload_phase") == "start" {
+			_, _ = w.Write([]byte(`{"video_id":"video-123","upload_url":"https://rupload.facebook.com/video-upload/v20.0/video-123"}`))
+			return
+		}
+		if !uploaded {
+			t.Error("finish occurred before upload")
+		}
+		_, _ = w.Write([]byte(`{"success":true}`))
+	})
+	out, err := client.PublishReelByURL(t.Context(), "page", "test-token", "caption", "https://cdn.example.com/reel.mp4")
+	if err != nil || out == nil || out.FBPostID != "video-123" || !uploaded {
+		t.Fatalf("Reel protocol failed: %v", err)
+	}
+}
+func TestReelRejectsUntrustedUploadHost(t *testing.T) {
+	calls := 0
+	client := newMockClient(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(`{"video_id":"123","upload_url":"https://attacker.example/upload"}`))
+	})
+	if _, err := client.PublishReelByURL(t.Context(), "page", "secret", "caption", "https://cdn.example.com/reel.mp4"); err == nil || calls != 1 {
+		t.Fatal("must reject upload host without sending token")
+	}
+}

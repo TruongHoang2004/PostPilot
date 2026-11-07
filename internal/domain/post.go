@@ -26,6 +26,7 @@ type Post struct {
 	ID                string       `json:"id"`
 	OrganizationID    string       `json:"organization_id"`
 	BatchID           string       `json:"batch_id,omitempty"`
+	BatchName         string       `json:"batch_name,omitempty"`
 	ChannelGroupID    string       `json:"channel_group_id,omitempty"`
 	ChannelID         string       `json:"channel_id"`
 	ChannelName       string       `json:"channel_name,omitempty"`
@@ -118,9 +119,6 @@ func (p *Post) Resubmit(now time.Time) {
 
 // PrepareForCreation applies domain defaults when creating a new Post aggregate.
 func (p *Post) PrepareForCreation(publishNow bool, now time.Time) {
-	if p.OrganizationID == "" {
-		p.OrganizationID = DefaultOrganizationID
-	}
 	p.MediaType = NormalizeMediaType(p.MediaType, p.LinkURL)
 	p.QueueTier = DetermineQueueTier(p.MediaType)
 	if p.ScheduledAt.IsZero() || publishNow {
@@ -192,4 +190,64 @@ type SystemStats struct {
 	RejectedPosts        int `json:"rejected_posts"`
 	FastQueueDepth       int `json:"fast_queue_depth"`
 	HeavyQueueDepth      int `json:"heavy_queue_depth"`
+}
+
+// CanEdit reports whether content and schedule may still be changed by an author.
+func (p *Post) CanEdit() bool {
+	for _, s := range EditablePostStatuses() {
+		if p.Status == s {
+			return true
+		}
+	}
+	return false
+}
+
+// ApplyPatch updates the aggregate in memory. A FAILED post that receives a new time returns to
+// SCHEDULED with its retry budget reset so the scheduler treats the new time as a fresh attempt;
+// a content-only edit of a FAILED post keeps it FAILED. RequireReview sends the post back to
+// PENDING_APPROVAL and clears the previous decision.
+func (p *Post) ApplyPatch(patch PostPatch, now time.Time) error {
+	if !p.CanEdit() {
+		return ErrPostNotEditable
+	}
+	if patch.Content != nil {
+		p.Content = *patch.Content
+	}
+	if patch.LinkURL != nil {
+		p.LinkURL = *patch.LinkURL
+	}
+	if patch.MediaType != nil {
+		p.MediaType = *patch.MediaType
+	}
+	if patch.MediaURLs != nil {
+		p.MediaURLs = append([]string{}, (*patch.MediaURLs)...)
+	}
+	if p.MediaURLs == nil {
+		p.MediaURLs = []string{}
+	}
+	p.MediaType = NormalizeMediaType(p.MediaType, p.LinkURL)
+	p.QueueTier = DetermineQueueTier(p.MediaType)
+	if patch.ScheduledAt != nil {
+		p.ScheduledAt = patch.ScheduledAt.UTC()
+		if p.Status == PostStatusFailed {
+			p.Status = PostStatusScheduled
+			p.RetryCount = 0
+			p.NextRetryAt = nil
+			p.LastErrorCode = 0
+			p.LastErrorMessage = ""
+		}
+	}
+	if patch.RequireReview {
+		p.Status = PostStatusPendingApproval
+		p.ReviewedBy = ""
+		p.ReviewedAt = nil
+		p.RejectionNote = ""
+		p.RetryCount = 0
+		p.NextRetryAt = nil
+		if patch.SubmittedBy != "" {
+			p.SubmittedBy = patch.SubmittedBy
+		}
+	}
+	p.UpdatedAt = now.UTC()
+	return nil
 }

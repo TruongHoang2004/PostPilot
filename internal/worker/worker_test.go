@@ -51,7 +51,7 @@ func TestSchedulerAndProcessorEndToEnd(t *testing.T) {
 	notif := notifier.NewTelegramNotifier("", "", logger)
 
 	encToken, _ := cipher.Encrypt("EAAB_permanent_page_token")
-	channel, err := store.UpsertChannel(context.Background(), &domain.Channel{
+	channel, err := store.UpsertChannel(domain.WithTenantContext(context.Background(), domain.DefaultTenantContext()), &domain.Channel{
 		Platform:             domain.PlatformFacebook,
 		ExternalID:           "998877",
 		Name:                 "Happy Darwin Tech Channel",
@@ -64,7 +64,7 @@ func TestSchedulerAndProcessorEndToEnd(t *testing.T) {
 		t.Fatalf("upsert channel error: %v", err)
 	}
 
-	post, err := store.CreatePost(context.Background(), &domain.Post{
+	post, err := store.CreatePost(domain.WithTenantContext(context.Background(), domain.DefaultTenantContext()), &domain.Post{
 		ChannelID:   channel.ID,
 		Content:     "Automated end-to-end testing post in Go!",
 		MediaType:   domain.MediaTypeNone,
@@ -79,21 +79,21 @@ func TestSchedulerAndProcessorEndToEnd(t *testing.T) {
 	sched := NewScheduler(cfg, store, redisClient, cipher, fbClient, notif, logger)
 	proc := NewProcessor(cfg, store, redisClient, cipher, fbClient, notif, logger)
 
-	enqueued := sched.ScanAndEnqueueDuePosts(context.Background())
+	enqueued := sched.ScanAndEnqueueDuePosts(domain.WithTenantContext(context.Background(), domain.DefaultTenantContext()))
 	if enqueued != 1 {
 		t.Fatalf("expected 1 post enqueued, got %d", enqueued)
 	}
 
-	job, err := redisClient.DequeuePublishJob(context.Background(), domain.QueueTierFast, 1)
+	job, err := redisClient.DequeuePublishJob(domain.WithTenantContext(context.Background(), domain.DefaultTenantContext()), domain.QueueTierFast, 1)
 	if err != nil {
 		t.Fatalf("dequeue error: %v", err)
 	}
 
-	if err := proc.ProcessPostByID(context.Background(), job.PostID); err != nil {
+	if err := proc.ProcessPostByID(domain.WithTenantContext(context.Background(), domain.DefaultTenantContext()), job.PostID); err != nil {
 		t.Fatalf("process post error: %v", err)
 	}
 
-	updatedPost, _ := store.GetPostByID(context.Background(), post.ID)
+	updatedPost, _ := store.GetPostByID(domain.WithTenantContext(context.Background(), domain.DefaultTenantContext()), post.ID)
 	if updatedPost.Status != domain.PostStatusPublished {
 		t.Fatalf("expected post status PUBLISHED, got %s", updatedPost.Status)
 	}
@@ -101,7 +101,88 @@ func TestSchedulerAndProcessorEndToEnd(t *testing.T) {
 		t.Fatalf("expected external_post_id 998877_112233, got %s", updatedPost.ExternalPostID)
 	}
 
-	logs, _ := store.ListPublishLogsByPost(context.Background(), post.ID)
+	logs, _ := store.ListPublishLogsByPost(domain.WithTenantContext(context.Background(), domain.DefaultTenantContext()), post.ID)
+	if len(logs) != 1 || logs[0].Action != "PUBLISH_FEED" {
+		t.Fatalf("expected 1 PUBLISH_FEED log entry, got %+v", logs)
+	}
+}
+func TestSchedulerAndProcessorOtherOrganization(t *testing.T) {
+	cfg := config.Load()
+	cfg.RateLimitThresholdPercent = 80
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	store := database.NewInMemoryStore()
+	_, _ = store.CreateOrganization(t.Context(), &domain.Organization{ID: "workspace-b", Name: "Workspace B"}, domain.DefaultUserID)
+	redisClient := redis.NewInMemoryClient()
+	cipher, _ := crypto.NewTokenCipher(cfg.TokenEncryptionKey)
+	fbClient := facebook.NewClient("https://graph.facebook.com", "v20.0").WithHTTPClient(&http.Client{
+		Transport: mockRoundTripper{
+			fn: func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Page-Usage", `{"call_count":15,"total_cputime":10,"total_time":12}`)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "998877_112233",
+				})
+			},
+		},
+	})
+	notif := notifier.NewTelegramNotifier("", "", logger)
+
+	encToken, _ := cipher.Encrypt("EAAB_permanent_page_token")
+	channel, err := store.UpsertChannel(domain.WithTenantContext(context.Background(), &domain.TenantContext{OrganizationID: "workspace-b"}), &domain.Channel{
+		Platform:             domain.PlatformFacebook,
+		ExternalID:           "998877",
+		Name:                 "Happy Darwin Tech Channel",
+		Category:             "Software Company",
+		EncryptedAccessToken: encToken,
+		TokenStatus:          domain.TokenStatusActive,
+		IsActive:             true,
+	})
+	if err != nil {
+		t.Fatalf("upsert channel error: %v", err)
+	}
+
+	post, err := store.CreatePost(domain.WithTenantContext(context.Background(), &domain.TenantContext{OrganizationID: "workspace-b"}), &domain.Post{
+		ChannelID:   channel.ID,
+		Content:     "Automated end-to-end testing post in Go!",
+		MediaType:   domain.MediaTypeNone,
+		Status:      domain.PostStatusScheduled,
+		ScheduledAt: time.Now().UTC().Add(-1 * time.Minute),
+		MaxRetries:  3,
+	})
+	if err != nil {
+		t.Fatalf("create post error: %v", err)
+	}
+
+	sched := NewScheduler(cfg, store, redisClient, cipher, fbClient, notif, logger)
+	proc := NewProcessor(cfg, store, redisClient, cipher, fbClient, notif, logger)
+
+	enqueued := sched.ScanAndEnqueueDuePosts(domain.WithTenantContext(context.Background(), &domain.TenantContext{OrganizationID: "workspace-b"}))
+	if enqueued != 1 {
+		t.Fatalf("expected 1 post enqueued, got %d", enqueued)
+	}
+
+	job, err := redisClient.DequeuePublishJob(domain.WithTenantContext(context.Background(), &domain.TenantContext{OrganizationID: "workspace-b"}), domain.QueueTierFast, 1)
+	if err != nil {
+		t.Fatalf("dequeue error: %v", err)
+	}
+
+	if job.OrganizationID != "workspace-b" {
+		t.Fatalf("job missing tenant: %+v", job)
+	}
+	if err := proc.ProcessPostByID(domain.WithTenantContext(context.Background(), &domain.TenantContext{OrganizationID: "workspace-b"}), job.PostID); err != nil {
+		t.Fatalf("process post error: %v", err)
+	}
+
+	updatedPost, _ := store.GetPostByID(domain.WithTenantContext(context.Background(), &domain.TenantContext{OrganizationID: "workspace-b"}), post.ID)
+	if updatedPost.Status != domain.PostStatusPublished {
+		t.Fatalf("expected post status PUBLISHED, got %s", updatedPost.Status)
+	}
+	if updatedPost.ExternalPostID != "998877_112233" {
+		t.Fatalf("expected external_post_id 998877_112233, got %s", updatedPost.ExternalPostID)
+	}
+
+	logs, _ := store.ListPublishLogsByPost(domain.WithTenantContext(context.Background(), &domain.TenantContext{OrganizationID: "workspace-b"}), post.ID)
 	if len(logs) != 1 || logs[0].Action != "PUBLISH_FEED" {
 		t.Fatalf("expected 1 PUBLISH_FEED log entry, got %+v", logs)
 	}

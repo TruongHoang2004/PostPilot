@@ -21,7 +21,6 @@ import (
 	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/storage"
-	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 	"github.com/TruongHoang2004/PostPilot/internal/worker"
 )
 
@@ -35,7 +34,7 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	store := database.NewInMemoryStore()
 	redisClient := redis.NewInMemoryClient()
 	cipher, _ := crypto.NewTokenCipher(cfg.TokenEncryptionKey)
-	fbClient := facebook.NewClient(cfg.FBGraphBaseURL, cfg.FBGraphVersion)
+	fbClient := testFacebookClient(cfg.FBGraphBaseURL, cfg.FBGraphVersion)
 	s3 := storage.NewS3Service(cfg.S3Endpoint, cfg.S3PublicBaseURL, cfg.S3Region, cfg.S3Bucket, cfg.S3AccessKey, cfg.S3SecretKey)
 	aiGen := ai.NewGeminiGenerator("", cfg.GeminiModel)
 	notif := notifier.NewTelegramNotifier("", "", logger)
@@ -47,7 +46,7 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	// 1. Test GET /healthz
 	req1 := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec1 := httptest.NewRecorder()
-	handler.ServeHTTP(rec1, req1)
+	serveTest(t, srv, handler, rec1, req1)
 	if rec1.Code != http.StatusOK {
 		t.Fatalf("expected /healthz 200, got %d", rec1.Code)
 	}
@@ -56,7 +55,7 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	channelBody := `{"platform":"FACEBOOK","external_id":"100200300","name":"Darwin Official","category":"Tech","access_token":"EAABsbCS1iHgBO1234567890"}`
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/channels", strings.NewReader(channelBody))
 	rec2 := httptest.NewRecorder()
-	handler.ServeHTTP(rec2, req2)
+	serveTest(t, srv, handler, rec2, req2)
 	if rec2.Code != http.StatusCreated {
 		t.Fatalf("expected POST /api/v1/channels 201, got %d: %s", rec2.Code, rec2.Body.String())
 	}
@@ -78,7 +77,7 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	})
 	req3 := httptest.NewRequest(http.MethodPost, "/api/v1/posts", bytes.NewReader(postPayload))
 	rec3 := httptest.NewRecorder()
-	handler.ServeHTTP(rec3, req3)
+	serveTest(t, srv, handler, rec3, req3)
 	if rec3.Code != http.StatusCreated {
 		t.Fatalf("expected POST /api/v1/posts 201, got %d: %s", rec3.Code, rec3.Body.String())
 	}
@@ -89,14 +88,14 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	// 3a. Test GET /api/v1/posts and GET /api/v1/posts/{id}
 	reqListPosts := httptest.NewRequest(http.MethodGet, "/api/v1/posts", nil)
 	recListPosts := httptest.NewRecorder()
-	handler.ServeHTTP(recListPosts, reqListPosts)
+	serveTest(t, srv, handler, recListPosts, reqListPosts)
 	if recListPosts.Code != http.StatusOK {
 		t.Fatalf("expected GET /api/v1/posts 200, got %d", recListPosts.Code)
 	}
 
 	reqGetPost := httptest.NewRequest(http.MethodGet, "/api/v1/posts/"+createdPostID, nil)
 	recGetPost := httptest.NewRecorder()
-	handler.ServeHTTP(recGetPost, reqGetPost)
+	serveTest(t, srv, handler, recGetPost, reqGetPost)
 	if recGetPost.Code != http.StatusOK {
 		t.Fatalf("expected GET /api/v1/posts/%s 200, got %d", createdPostID, recGetPost.Code)
 	}
@@ -104,7 +103,7 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	// 3b. Test POST /api/v1/posts/{id}/cancel
 	reqCancel := httptest.NewRequest(http.MethodPost, "/api/v1/posts/"+createdPostID+"/cancel", nil)
 	recCancel := httptest.NewRecorder()
-	handler.ServeHTTP(recCancel, reqCancel)
+	serveTest(t, srv, handler, recCancel, reqCancel)
 	if recCancel.Code != http.StatusOK {
 		t.Fatalf("expected POST /api/v1/posts/cancel 200, got %d", recCancel.Code)
 	}
@@ -112,14 +111,14 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	// 3c. Test GET /api/v1/channels and POST /api/v1/channels/{id}/verify-token
 	reqChannels := httptest.NewRequest(http.MethodGet, "/api/v1/channels", nil)
 	recChannels := httptest.NewRecorder()
-	handler.ServeHTTP(recChannels, reqChannels)
+	serveTest(t, srv, handler, recChannels, reqChannels)
 	if recChannels.Code != http.StatusOK {
 		t.Fatalf("expected GET /api/v1/channels 200, got %d", recChannels.Code)
 	}
 
 	reqVerify := httptest.NewRequest(http.MethodPost, "/api/v1/channels/"+channelID+"/verify-token", nil)
 	recVerify := httptest.NewRecorder()
-	handler.ServeHTTP(recVerify, reqVerify)
+	serveTest(t, srv, handler, recVerify, reqVerify)
 	if recVerify.Code != http.StatusOK {
 		t.Fatalf("expected POST /api/v1/channels/verify-token 200, got %d", recVerify.Code)
 	}
@@ -127,7 +126,7 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	// 3d. Test DELETE /api/v1/channels/{id}
 	reqDelChan := httptest.NewRequest(http.MethodDelete, "/api/v1/channels/"+channelID, nil)
 	recDelChan := httptest.NewRecorder()
-	handler.ServeHTTP(recDelChan, reqDelChan)
+	serveTest(t, srv, handler, recDelChan, reqDelChan)
 	if recDelChan.Code != http.StatusOK {
 		t.Fatalf("expected DELETE /api/v1/channels 200, got %d", recDelChan.Code)
 	}
@@ -135,20 +134,21 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	// 4. Test POST /api/v1/ai/generate (fallback template)
 	req4 := httptest.NewRequest(http.MethodPost, "/api/v1/ai/generate", strings.NewReader(`{"topic":"AI Digital Transformation"}`))
 	rec4 := httptest.NewRecorder()
-	handler.ServeHTTP(rec4, req4)
-	if rec4.Code != http.StatusOK {
-		t.Fatalf("expected POST /api/v1/ai/generate 200, got %d", rec4.Code)
+	serveTest(t, srv, handler, rec4, req4)
+	if rec4.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected unconfigured AI to return 503, got %d", rec4.Code)
 	}
 
 	// 5. Test POST /api/v1/media/presign (AWS SigV4)
 	req5 := httptest.NewRequest(http.MethodPost, "/api/v1/media/presign", strings.NewReader(`{"file_name":"video.mp4","mime_type":"video/mp4"}`))
 	rec5 := httptest.NewRecorder()
-	handler.ServeHTTP(rec5, req5)
+	serveTest(t, srv, handler, rec5, req5)
 	if rec5.Code != http.StatusOK {
 		t.Fatalf("expected POST /api/v1/media/presign 200, got %d", rec5.Code)
 	}
 
-	// 6. Test POST /api/v1/media/upload (Direct Video Multipart Upload)
+	// 6. An unavailable storage service must not silently save to local disk.
+	srv.s3 = nil
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	part, err := writer.CreateFormFile("file", "demo_reel.mp4")
@@ -161,23 +161,15 @@ func TestAPIEndpointsFlow(t *testing.T) {
 	req6 := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload", &body)
 	req6.Header.Set("Content-Type", writer.FormDataContentType())
 	rec6 := httptest.NewRecorder()
-	handler.ServeHTTP(rec6, req6)
-	if rec6.Code != http.StatusOK {
-		t.Fatalf("expected POST /api/v1/media/upload 200, got %d: %s", rec6.Code, rec6.Body.String())
-	}
-
-	var uploadResp map[string]any
-	if err := json.Unmarshal(rec6.Body.Bytes(), &uploadResp); err != nil {
-		t.Fatalf("unmarshal upload resp failed: %v", err)
-	}
-	if uploadResp["public_url"] == "" {
-		t.Fatalf("expected non-empty public_url from direct media upload")
+	serveTest(t, srv, handler, rec6, req6)
+	if rec6.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected unavailable storage 503, got %d", rec6.Code)
 	}
 
 	// 7. Test GET / (Dashboard UI returns HTML)
 	req7 := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec7 := httptest.NewRecorder()
-	handler.ServeHTTP(rec7, req7)
+	serveTest(t, srv, handler, rec7, req7)
 	if rec7.Code != http.StatusOK {
 		t.Fatalf("expected GET / 200, got %d", rec7.Code)
 	}
@@ -187,14 +179,14 @@ func TestAPIEndpointsFlow(t *testing.T) {
 }
 
 func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
-	_, handler, store := setupTestServer(t)
+	srv, handler, store := setupTestServer(t)
 
 	// -------------------------------------------------------------------------
 	// 1. Cross-Tenant Isolation: Org A vs Org B
 	// -------------------------------------------------------------------------
 	regA := `{"email":"tenant_a@pilot.com","password":"SuperSecretPasswordA1","full_name":"Tenant A Org"}`
 	recA := httptest.NewRecorder()
-	handler.ServeHTTP(recA, httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(regA)))
+	serveTest(t, srv, handler, recA, httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(regA)))
 	if recA.Code != http.StatusCreated {
 		t.Fatalf("register A failed: %d: %s", recA.Code, recA.Body.String())
 	}
@@ -204,7 +196,7 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 
 	regB := `{"email":"tenant_b@pilot.com","password":"SuperSecretPasswordB1","full_name":"Tenant B Org"}`
 	recB := httptest.NewRecorder()
-	handler.ServeHTTP(recB, httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(regB)))
+	serveTest(t, srv, handler, recB, httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", strings.NewReader(regB)))
 	if recB.Code != http.StatusCreated {
 		t.Fatalf("register B failed: %d: %s", recB.Code, recB.Body.String())
 	}
@@ -216,7 +208,7 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	reqChA := httptest.NewRequest(http.MethodPost, "/api/v1/channels", strings.NewReader(`{"platform":"FACEBOOK","external_id":"fb-tenant-a-1","name":"Org A Channel","access_token":"tokenA"}`))
 	reqChA.Header.Set("Authorization", "Bearer "+tokenA)
 	recChA := httptest.NewRecorder()
-	handler.ServeHTTP(recChA, reqChA)
+	serveTest(t, srv, handler, recChA, reqChA)
 	if recChA.Code != http.StatusCreated {
 		t.Fatalf("create channel A failed: %d: %s", recChA.Code, recChA.Body.String())
 	}
@@ -227,7 +219,7 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	reqGrA := httptest.NewRequest(http.MethodPost, "/api/v1/channel-groups", strings.NewReader(`{"name":"Org A Group","require_approval":true}`))
 	reqGrA.Header.Set("Authorization", "Bearer "+tokenA)
 	recGrA := httptest.NewRecorder()
-	handler.ServeHTTP(recGrA, reqGrA)
+	serveTest(t, srv, handler, recGrA, reqGrA)
 	var grA domain.ChannelGroup
 	_ = json.Unmarshal(recGrA.Body.Bytes(), &grA)
 
@@ -235,7 +227,7 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	reqPoA := httptest.NewRequest(http.MethodPost, "/api/v1/posts", strings.NewReader(`{"channel_id":"`+chA.ID+`","content":"Org A Secret"}`))
 	reqPoA.Header.Set("Authorization", "Bearer "+tokenA)
 	recPoA := httptest.NewRecorder()
-	handler.ServeHTTP(recPoA, reqPoA)
+	serveTest(t, srv, handler, recPoA, reqPoA)
 	var poA domain.Post
 	_ = json.Unmarshal(recPoA.Body.Bytes(), &poA)
 
@@ -243,7 +235,7 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	reqListChB := httptest.NewRequest(http.MethodGet, "/api/v1/channels", nil)
 	reqListChB.Header.Set("Authorization", "Bearer "+tokenB)
 	recListChB := httptest.NewRecorder()
-	handler.ServeHTTP(recListChB, reqListChB)
+	serveTest(t, srv, handler, recListChB, reqListChB)
 	var listChB struct {
 		Channels []domain.Channel `json:"channels"`
 	}
@@ -257,7 +249,7 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	reqListPoB := httptest.NewRequest(http.MethodGet, "/api/v1/posts", nil)
 	reqListPoB.Header.Set("Authorization", "Bearer "+tokenB)
 	recListPoB := httptest.NewRecorder()
-	handler.ServeHTTP(recListPoB, reqListPoB)
+	serveTest(t, srv, handler, recListPoB, reqListPoB)
 	var listPoB struct {
 		Posts []domain.Post `json:"posts"`
 	}
@@ -272,7 +264,7 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	reqGetPoB := httptest.NewRequest(http.MethodGet, "/api/v1/posts/"+poA.ID, nil)
 	reqGetPoB.Header.Set("Authorization", "Bearer "+tokenB)
 	recGetPoB := httptest.NewRecorder()
-	handler.ServeHTTP(recGetPoB, reqGetPoB)
+	serveTest(t, srv, handler, recGetPoB, reqGetPoB)
 	if recGetPoB.Code != http.StatusNotFound && recGetPoB.Code != http.StatusForbidden {
 		t.Fatalf("expected 404/403 for cross-tenant post detail, got %d", recGetPoB.Code)
 	}
@@ -281,7 +273,7 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	reqDelChB := httptest.NewRequest(http.MethodDelete, "/api/v1/channels/"+chA.ID, nil)
 	reqDelChB.Header.Set("Authorization", "Bearer "+tokenB)
 	recDelChB := httptest.NewRecorder()
-	handler.ServeHTTP(recDelChB, reqDelChB)
+	serveTest(t, srv, handler, recDelChB, reqDelChB)
 	if recDelChB.Code != http.StatusNotFound && recDelChB.Code != http.StatusForbidden {
 		t.Fatalf("expected 404/403 for cross-tenant delete channel, got %d", recDelChB.Code)
 	}
@@ -290,7 +282,7 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	reqDelGrB := httptest.NewRequest(http.MethodDelete, "/api/v1/channel-groups/"+grA.ID, nil)
 	reqDelGrB.Header.Set("Authorization", "Bearer "+tokenB)
 	recDelGrB := httptest.NewRecorder()
-	handler.ServeHTTP(recDelGrB, reqDelGrB)
+	serveTest(t, srv, handler, recDelGrB, reqDelGrB)
 	if recDelGrB.Code != http.StatusBadRequest && recDelGrB.Code != http.StatusNotFound {
 		t.Fatalf("expected 400/404 for cross-tenant delete group, got %d", recDelGrB.Code)
 	}
@@ -313,27 +305,27 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 
 	// VIEWER cannot create post -> 403
 	reqV := httptest.NewRequest(http.MethodPost, "/api/v1/posts", strings.NewReader(`{"channel_id":"`+chRbac.ID+`","content":"Viewer post"}`))
-	reqV.Header.Set("X-Simulate-Role", "VIEWER")
+	authenticateTestRole(t, srv, reqV, "VIEWER", "")
 	recV := httptest.NewRecorder()
-	handler.ServeHTTP(recV, reqV)
+	serveTest(t, srv, handler, recV, reqV)
 	if recV.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for VIEWER post creation, got %d", recV.Code)
 	}
 
 	// EDITOR creates post with publish_now -> 403 Forbidden
 	reqEdDirect := httptest.NewRequest(http.MethodPost, "/api/v1/posts", strings.NewReader(`{"channel_id":"`+chRbac.ID+`","content":"Editor direct","publish_now":true}`))
-	reqEdDirect.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqEdDirect, "EDITOR", "")
 	recEdDirect := httptest.NewRecorder()
-	handler.ServeHTTP(recEdDirect, reqEdDirect)
+	serveTest(t, srv, handler, recEdDirect, reqEdDirect)
 	if recEdDirect.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for EDITOR publish_now on approval channel, got %d", recEdDirect.Code)
 	}
 
 	// EDITOR creates post -> forced to PENDING_APPROVAL
 	reqEdPost := httptest.NewRequest(http.MethodPost, "/api/v1/posts", strings.NewReader(`{"channel_id":"`+chRbac.ID+`","content":"Editor approval post"}`))
-	reqEdPost.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqEdPost, "EDITOR", "")
 	recEdPost := httptest.NewRecorder()
-	handler.ServeHTTP(recEdPost, reqEdPost)
+	serveTest(t, srv, handler, recEdPost, reqEdPost)
 	if recEdPost.Code != http.StatusCreated {
 		t.Fatalf("expected 201 for EDITOR post, got %d", recEdPost.Code)
 	}
@@ -345,9 +337,9 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 
 	// EDITOR cannot call /review -> 403
 	reqEdRev := httptest.NewRequest(http.MethodPost, "/api/v1/posts/"+edCreatedPost.ID+"/review", strings.NewReader(`{"action":"APPROVED"}`))
-	reqEdRev.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqEdRev, "EDITOR", "")
 	recEdRev := httptest.NewRecorder()
-	handler.ServeHTTP(recEdRev, reqEdRev)
+	serveTest(t, srv, handler, recEdRev, reqEdRev)
 	if recEdRev.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for EDITOR review, got %d", recEdRev.Code)
 	}
@@ -357,9 +349,9 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	// -------------------------------------------------------------------------
 	// APPROVER rejects with note -> REJECTED
 	reqApprRej := httptest.NewRequest(http.MethodPost, "/api/v1/posts/"+edCreatedPost.ID+"/review", strings.NewReader(`{"action":"REJECTED","note":"Fix grammar"}`))
-	reqApprRej.Header.Set("X-Simulate-Role", "APPROVER")
+	authenticateTestRole(t, srv, reqApprRej, "APPROVER", "")
 	recApprRej := httptest.NewRecorder()
-	handler.ServeHTTP(recApprRej, reqApprRej)
+	serveTest(t, srv, handler, recApprRej, reqApprRej)
 	if recApprRej.Code != http.StatusOK {
 		t.Fatalf("expected 200 for APPROVER rejection, got %d", recApprRej.Code)
 	}
@@ -370,9 +362,9 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 
 	// EDITOR resubmits -> PENDING_APPROVAL
 	reqResub := httptest.NewRequest(http.MethodPost, "/api/v1/posts/"+edCreatedPost.ID+"/submit-approval", strings.NewReader(`{"content":"Fixed grammar text"}`))
-	reqResub.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqResub, "EDITOR", "")
 	recResub := httptest.NewRecorder()
-	handler.ServeHTTP(recResub, reqResub)
+	serveTest(t, srv, handler, recResub, reqResub)
 	if recResub.Code != http.StatusOK {
 		t.Fatalf("expected 200 for submit-approval, got %d", recResub.Code)
 	}
@@ -383,9 +375,9 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 
 	// APPROVER approves -> SCHEDULED
 	reqApprOk := httptest.NewRequest(http.MethodPost, "/api/v1/posts/"+edCreatedPost.ID+"/review", strings.NewReader(`{"action":"APPROVED"}`))
-	reqApprOk.Header.Set("X-Simulate-Role", "APPROVER")
+	authenticateTestRole(t, srv, reqApprOk, "APPROVER", "")
 	recApprOk := httptest.NewRecorder()
-	handler.ServeHTTP(recApprOk, reqApprOk)
+	serveTest(t, srv, handler, recApprOk, reqApprOk)
 	if recApprOk.Code != http.StatusOK {
 		t.Fatalf("expected 200 for APPROVER approval, got %d", recApprOk.Code)
 	}
@@ -407,9 +399,9 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 
 	futureSched := time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339)
 	reqBatchPost := httptest.NewRequest(http.MethodPost, "/api/v1/posts", strings.NewReader(`{"channel_group_id":"`+cgRbac.ID+`","content":"Batch Content","scheduled_at":"`+futureSched+`"}`))
-	reqBatchPost.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqBatchPost, "EDITOR", "")
 	recBatchPost := httptest.NewRecorder()
-	handler.ServeHTTP(recBatchPost, reqBatchPost)
+	serveTest(t, srv, handler, recBatchPost, reqBatchPost)
 	if recBatchPost.Code != http.StatusCreated {
 		t.Fatalf("expected 201 for batch post, got %d: %s", recBatchPost.Code, recBatchPost.Body.String())
 	}
@@ -424,9 +416,9 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 
 	// Batch approval with apply_to_batch: true
 	reqBatchAppr := httptest.NewRequest(http.MethodPost, "/api/v1/posts/"+bP1ID+"/review", strings.NewReader(`{"action":"APPROVED","apply_to_batch":true}`))
-	reqBatchAppr.Header.Set("X-Simulate-Role", "APPROVER")
+	authenticateTestRole(t, srv, reqBatchAppr, "APPROVER", "")
 	recBatchAppr := httptest.NewRecorder()
-	handler.ServeHTTP(recBatchAppr, reqBatchAppr)
+	serveTest(t, srv, handler, recBatchAppr, reqBatchAppr)
 	if recBatchAppr.Code != http.StatusOK {
 		t.Fatalf("expected 200 for batch approval, got %d", recBatchAppr.Code)
 	}
@@ -441,7 +433,7 @@ func TestServer_CrossTenantAndRBACSecurity(t *testing.T) {
 	// -------------------------------------------------------------------------
 	reqLegacy := httptest.NewRequest(http.MethodGet, "/api/v1/channels", nil)
 	recLegacy := httptest.NewRecorder()
-	handler.ServeHTTP(recLegacy, reqLegacy)
+	serveTest(t, srv, handler, recLegacy, reqLegacy)
 	if recLegacy.Code != http.StatusOK {
 		t.Fatalf("expected 200 for legacy request without tenant header, got %d", recLegacy.Code)
 	}

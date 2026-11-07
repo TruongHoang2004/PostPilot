@@ -16,11 +16,14 @@ PostPilot/
 │   ├── domain/                         # CORE DOMAIN: Post & Publishing (Platform-agnostic)
 │   │   ├── channel.go                  # Channel Entity, PlatformType, RateLimitUsage, TokenStatus
 │   │   ├── media.go                    # MediaAsset, MediaAttachment, MediaType & QueueTier Routing
-│   │   ├── post.go                     # Post Aggregate Root, PublishLog, PublishJobPayload & Invariants
+│   │   ├── post.go                     # Post Aggregate Root, PublishLog, PublishJobPayload & Invariants (CanEdit/ApplyPatch)
+│   │   ├── schedule.go                 # SchedulePlan, GenerateScheduleSlots, Occupancy, PostQuery, PostBatch, PostPatch
 │   │   └── ports.go                    # Outbound Ports: PublisherPort, PublisherError, PublisherRegistry
+│   ├── app/publishing/                 # APPLICATION SERVICE: target resolution, RBAC/approval rules, bulk planning, dispatch
+│   │   └── service.go                  # Service.Create / PlanBulk / CreateBulk / Update (dùng chung cho handler đơn & hàng loạt)
 │   ├── api/                            # PRIMARY ADAPTER: Modular HTTP Handlers by Bounded Context
 │   │   ├── server.go                   # Router, Dependency Injection, Middleware (CORS, Logging, Recovery)
-│   │   ├── publishing_handler.go       # Publishing Context (/api/v1/posts*)
+│   │   ├── publishing_handler.go       # Publishing Context (/api/v1/posts*, /posts/bulk, /posts/bulk/preview, PATCH /posts/{id}, /posts/batches/{id})
 │   │   ├── channel_handler.go          # Channel Context (/api/v1/channels*)
 │   │   ├── facebook_handler.go         # Facebook Auth & Webhook Adapter (/api/v1/auth/facebook/*, /api/v1/webhooks/facebook)
 │   │   ├── media_handler.go            # Media Context (/api/v1/media/*)
@@ -37,7 +40,8 @@ PostPilot/
 │   │   ├── scheduler.go                # Quét bài đến hạn (FOR UPDATE SKIP LOCKED) & Check Token qua PublisherRegistry
 │   │   └── processor.go                # Worker Pool 2 tầng (FAST / HEAVY) gọi PublisherPort & Exponential Backoff
 │   ├── database/                       # SECONDARY ADAPTER: Repository & Custom Postgres Driver
-│   │   ├── repository.go               # Store interface, PostgresStore & InMemoryStore fallback
+│   │   ├── repository.go               # Store interface, PostgresStore & InMemoryStore (test double)
+│   │   ├── repository_posts.go         # QueryPosts / CreatePostsBatch (tx) / UpdatePost (CAS) / GetPostBatch cho cả hai store
 │   │   ├── migrator.go                 # Quản lý bảng schema_migrations
 │   │   └── pgdriver/driver.go          # Custom PostgreSQL Wire Protocol v3.0 Driver (SCRAM-SHA-256)
 │   ├── infra/                          # SECONDARY ADAPTERS: Hạ tầng kỹ thuật
@@ -53,11 +57,14 @@ PostPilot/
 │   ├── embed.go
 │   ├── 000001_init_schema.{up,down}.sql
 │   ├── 000002_add_rate_limits_and_webhooks.{up,down}.sql
-│   └── 000003_refactor_channels_schema.{up,down}.sql
+│   ├── 000003_refactor_channels_schema.{up,down}.sql
+│   ├── 000004_add_organizations_and_rbac.{up,down}.sql
+│   ├── 000005_oauth_states.{up,down}.sql
+│   └── 000006_post_batches.{up,down}.sql            # post_batches + idx_posts_org_channel_sched
 ├── frontend/                           # Next.js 14 App Router Studio UI (:3000)
 │   └── src/
 │       ├── app/                        # RootLayout (layout.tsx) & Main Studio Page (page.tsx)
-│       ├── components/                 # Header, StatsCards, PostComposer, PostList, PageManager, PostDetailModal
+│       ├── components/                 # Header, ScheduleView, CalendarWeek, PostComposer, BulkComposer, SchedulePicker, TargetPicker, MediaUploader, PostDetailModal, …
 │       ├── context/                    # ThemeContext (Dark/Light) & DialogContext (Modal/Toast)
 │       └── lib/                        # API Client (api.ts), TypeScript Interfaces (types.ts), Utils
 ├── infra/                              # Shared Infrastructure Stack (/opt/infra trên VPS)
@@ -102,6 +109,9 @@ flowchart TB
             PORT_PUB["PublisherPort & PublisherRegistry (Outbound Port)"]
         end
         WORKER --> Domain
+        APP["internal/app/publishing (Service: targets, RBAC/approval, bulk plan, dispatch)"]
+        API_Handlers --> APP
+        APP --> Domain
         API_Handlers --> Domain
         API_Handlers --> WORKER
     end
@@ -286,7 +296,7 @@ stateDiagram-v2
 
 ## 6. Sơ Đồ Thực Thể Cơ Sở Dữ Liệu (PostgreSQL ER Diagram)
 
-Cơ sở dữ liệu PostgreSQL 16 gồm 7 bảng được quản lý qua các bản migration `000001`, `000002` và `000003_refactor_channels_schema`:
+Cơ sở dữ liệu PostgreSQL 16 được quản lý qua các bản migration `000001` → `000006`. Sơ đồ dưới đây mô tả lõi publishing; migration `000004` bổ sung `users`, `organizations`, `organization_members`, `organization_invitations`, `channel_groups`, `channel_group_items`, `channel_group_permissions`, `post_approvals`, `audit_logs` cùng cột `organization_id`/`batch_id`/review trên `posts`; `000005` thêm `oauth_states`; `000006` thêm `post_batches` (lô bài: `name`, `kind` BULK|FANOUT, `schedule_plan` JSONB, `item_count`) được `posts.batch_id` tham chiếu mềm, và chỉ mục `idx_posts_org_channel_sched (organization_id, channel_id, scheduled_at)` phục vụ lịch theo khoảng thời gian và phát hiện trùng giờ:
 
 ```mermaid
 erDiagram
@@ -406,3 +416,9 @@ erDiagram
 6. **Hàng đợi 2 tầng (`FAST` vs `HEAVY`) & Bảo vệ Rate-Limit tự động**:
    - Tách biệt hàng đợi `postpilot:queue:fast` (4 goroutines cho Text, Link, Ảnh, Album) và `postpilot:queue:heavy` (2 goroutines cho Video Chunked 3 bước & Reels).
    - Tự động cập nhật `RateLimitUsage` từ adapter sau mỗi lần gọi API và chủ động hoãn bài đăng 5 phút nếu mức sử dụng chạm ngưỡng `80%`.
+
+8. **Tầng Application Service cho Publishing (`internal/app/publishing`)**:
+   - `Service.ResolveTargets` gom toàn bộ quy tắc chọn đích (một kênh / nhiều kênh / nhóm), kiểm tra tồn tại, quyền kênh (VIEWER bị từ chối, EDITOR không được `publish_now` trên nhóm bắt buộc duyệt) ở **một nơi** cho cả tạo đơn lẻ lẫn hàng loạt.
+   - `Service.PlanBulk` tính giờ đăng từ `domain.SchedulePlan` + `Occupancy` (các bài đang chờ trên cùng kênh) mà không ghi dữ liệu; `Service.CreateBulk` ghi lô + bài trong một transaction (`Store.CreatePostsBatch`). Fan-out một nội dung lên nhiều kênh cũng đi qua transaction này với `kind = FANOUT`.
+   - `Service.Update` cho phép sửa nội dung/đổi lịch bài `DRAFT|SCHEDULED|PENDING_APPROVAL|FAILED`; `Store.UpdatePost` dùng compare-and-set theo trạng thái để không ghi đè bài đã bị worker nhận (`QUEUED`/`PROCESSING`).
+   - HTTP handler chỉ còn giải mã JSON và ánh xạ `publishing.Error` → mã trạng thái.

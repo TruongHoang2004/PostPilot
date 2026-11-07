@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { Post, ApprovalAction } from "@/lib/types";
+import { toLocalInputValue } from "@/lib/schedule";
 import { api } from "@/lib/api";
 import { useOrg } from "@/context/OrgContext";
 import { useDialog } from "@/context/DialogContext";
@@ -125,7 +126,7 @@ export function ApprovalInbox() {
     setResubmitModalPost(post);
     setResubmitContent(post.content);
     setResubmitScheduledAt(
-      post.scheduled_at ? new Date(post.scheduled_at).toISOString().slice(0, 16) : ""
+      post.scheduled_at ? toLocalInputValue(new Date(post.scheduled_at)) : ""
     );
   };
 

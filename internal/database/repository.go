@@ -22,13 +22,16 @@ func WithTenantContext(ctx context.Context, tc *domain.TenantContext) context.Co
 	return domain.WithTenantContext(ctx, tc)
 }
 
-// TenantFromContext retrieves the TenantContext from ctx, defaulting to DefaultTenantContext if absent.
+// TenantFromContext returns only an explicitly scoped tenant; absence grants no identity or permissions.
 func TenantFromContext(ctx context.Context) *domain.TenantContext {
 	return domain.TenantFromContext(ctx)
 }
 
 // Store defines the storage Output Port interface for the entire system.
 type Store interface {
+	RegisterAccount(ctx context.Context, user *domain.User, orgName string) (*domain.User, *domain.Organization, error)
+	CreateOAuthState(ctx context.Context, hash string, expires time.Time) error
+	ConsumeOAuthState(ctx context.Context, hash string) error
 	Ping(ctx context.Context) error
 	ListOrganizationsForWorker(ctx context.Context) ([]domain.Organization, error)
 	ClaimLegacyWorkspace(ctx context.Context, userID string) error
@@ -44,6 +47,10 @@ type Store interface {
 	CreatePost(ctx context.Context, post *domain.Post) (*domain.Post, error)
 	GetPostByID(ctx context.Context, id string) (*domain.Post, error)
 	ListPosts(ctx context.Context, statusFilter string, limit int) ([]domain.Post, error)
+	QueryPosts(ctx context.Context, q domain.PostQuery) ([]domain.Post, error)
+	CreatePostsBatch(ctx context.Context, batch *domain.PostBatch, posts []*domain.Post) ([]*domain.Post, error)
+	UpdatePost(ctx context.Context, postID string, patch domain.PostPatch) (*domain.Post, error)
+	GetPostBatch(ctx context.Context, id string) (*domain.PostBatch, error)
 	ClaimDuePosts(ctx context.Context, now time.Time, batchSize int) ([]domain.Post, error)
 	MarkPostProcessing(ctx context.Context, postID string) error
 	MarkPostPublished(ctx context.Context, postID string, externalPostID string, publishedAt time.Time) error
@@ -242,23 +249,8 @@ func (s *PostgresStore) DeleteChannel(ctx context.Context, id string) error {
 	if err := requireOrganization(ctx); err != nil {
 		return err
 	}
-
-	tc := TenantFromContext(ctx)
-	var res sql.Result
-	var err error
-	if tc != nil && tc.OrganizationID != "" {
-		res, err = s.db.ExecContext(ctx, "DELETE FROM channels WHERE id = $1 AND organization_id = $2", id, tc.OrganizationID)
-	} else {
-		res, err = s.db.ExecContext(ctx, "DELETE FROM channels WHERE id = $1", id)
-	}
-	if err != nil {
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err == nil && rows == 0 {
-		return errors.New("channel not found")
-	}
-	return nil
+	res, err := s.db.ExecContext(ctx, "DELETE FROM channels WHERE id=$1 AND organization_id=$2", id, TenantFromContext(ctx).OrganizationID)
+	return affected(res, err)
 }
 
 func (s *PostgresStore) UpdateChannelTokenStatus(ctx context.Context, id string, status string, checkedAt time.Time) error {
@@ -268,8 +260,8 @@ func (s *PostgresStore) UpdateChannelTokenStatus(ctx context.Context, id string,
 
 	_, err := s.db.ExecContext(
 		ctx,
-		"UPDATE channels SET token_status = $1, last_checked_at = $2, updated_at = NOW() WHERE id = $3",
-		status, checkedAt, id,
+		"UPDATE channels SET token_status = $1, last_checked_at = $2, updated_at = NOW() WHERE id = $3 AND organization_id = $4",
+		status, checkedAt, id, TenantFromContext(ctx).OrganizationID,
 	)
 	return err
 }
@@ -283,8 +275,8 @@ func (s *PostgresStore) UpdateChannelRateLimit(ctx context.Context, id string, u
 		ctx,
 		`UPDATE channels
 		 SET rate_limit_call_count = $1, rate_limit_total_time = $2, rate_limit_total_cputime = $3, updated_at = NOW()
-		 WHERE id = $4`,
-		usage.CallCount, usage.TotalTime, usage.TotalCPUTime, id,
+		 WHERE id = $4 AND organization_id = $5`,
+		usage.CallCount, usage.TotalTime, usage.TotalCPUTime, id, TenantFromContext(ctx).OrganizationID,
 	)
 	return err
 }
@@ -293,57 +285,24 @@ func (s *PostgresStore) CreatePost(ctx context.Context, post *domain.Post) (*dom
 	if err := requireOrganization(ctx); err != nil {
 		return nil, err
 	}
-	if post.OrganizationID != "" && post.OrganizationID != TenantFromContext(ctx).OrganizationID {
-		err := errors.New("organization mismatch")
-		return nil, err
-	}
-
 	tc := TenantFromContext(ctx)
-	if _, err := s.GetChannelByID(ctx, post.ChannelID); err != nil {
+	if post.OrganizationID != "" && post.OrganizationID != tc.OrganizationID {
+		return nil, errors.New("organization mismatch")
+	}
+	channel, err := s.GetChannelByID(ctx, post.ChannelID)
+	if err != nil {
 		return nil, err
 	}
-
 	if post.OrganizationID == "" {
 		post.OrganizationID = tc.OrganizationID
 	}
 	if post.CreatedBy == "" {
 		post.CreatedBy = tc.UserID
 	}
-
-	if post.MediaURLs == nil {
-		post.MediaURLs = []string{}
-	}
-	mediaJSON, err := json.Marshal(post.MediaURLs)
-	if err != nil {
+	if err := insertPost(ctx, s.db, post); err != nil {
 		return nil, err
 	}
-	post.QueueTier = domain.DetermineQueueTier(post.MediaType)
-	if post.MaxRetries <= 0 {
-		post.MaxRetries = 3
-	}
-
-	query := `
-	INSERT INTO posts (
-		organization_id, channel_id, channel_group_id, batch_id, content, link_url, media_type, media_urls,
-		status, queue_tier, scheduled_at, max_retries, created_by, submitted_by
-	) VALUES (
-		$1, $2, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, $5, $6, $7, $8::jsonb,
-		$9, $10, $11, $12, $13, NULLIF($14, '')::uuid
-	)
-	RETURNING id, created_at::text, updated_at::text;`
-
-	var createdStr, updatedStr string
-	err = s.db.QueryRowContext(
-		ctx, query,
-		post.OrganizationID, post.ChannelID, post.ChannelGroupID, post.BatchID,
-		post.Content, post.LinkURL, post.MediaType, string(mediaJSON),
-		post.Status, post.QueueTier, post.ScheduledAt, post.MaxRetries, post.CreatedBy, post.SubmittedBy,
-	).Scan(&post.ID, &createdStr, &updatedStr)
-	if err != nil {
-		return nil, err
-	}
-	post.CreatedAt = parsePGTime(createdStr)
-	post.UpdatedAt = parsePGTime(updatedStr)
+	enrichPostChannel(post, channel)
 	return post, nil
 }
 
@@ -351,146 +310,38 @@ func (s *PostgresStore) GetPostByID(ctx context.Context, id string) (*domain.Pos
 	if err := requireOrganization(ctx); err != nil {
 		return nil, err
 	}
-
-	query := `
-	SELECT p.id, p.organization_id::text, p.channel_id, COALESCE(c.name, ''), COALESCE(c.platform, 'FACEBOOK'), COALESCE(c.external_id, ''),
-	       COALESCE(p.channel_group_id::text, ''), COALESCE(p.batch_id::text, ''),
-	       p.content, p.link_url, p.media_type, p.media_urls::text, p.status, p.queue_tier,
-	       p.scheduled_at::text, COALESCE(p.published_at::text, ''), p.external_post_id,
-	       COALESCE(p.submitted_by::text, ''), COALESCE(p.reviewed_by::text, ''), COALESCE(p.reviewed_at::text, ''), p.rejection_note,
-	       p.retry_count::text, p.max_retries::text, COALESCE(p.next_retry_at::text, ''), p.last_error_code::text, p.last_error_message,
-	       p.created_by, p.created_at::text, p.updated_at::text
-	FROM posts p
-	LEFT JOIN channels c ON c.id = p.channel_id
-	WHERE p.id = $1 AND p.organization_id = $2;`
-
-	var post domain.Post
-	var orgIDStr, platformStr, groupIDStr, batchIDStr, mediaStr, schedStr, pubStr string
-	var subStr, revStr, revAtStr, retryStr, maxRetryStr, nextRetryStr, errCodeStr, createdStr, updatedStr string
-	err := s.db.QueryRowContext(ctx, query, id, TenantFromContext(ctx).OrganizationID).Scan(
-		&post.ID, &orgIDStr, &post.ChannelID, &post.ChannelName, &platformStr, &post.ExternalChannelID,
-		&groupIDStr, &batchIDStr,
-		&post.Content, &post.LinkURL, &post.MediaType, &mediaStr, &post.Status, &post.QueueTier,
-		&schedStr, &pubStr, &post.ExternalPostID,
-		&subStr, &revStr, &revAtStr, &post.RejectionNote,
-		&retryStr, &maxRetryStr, &nextRetryStr, &errCodeStr, &post.LastErrorMessage,
-		&post.CreatedBy, &createdStr, &updatedStr,
-	)
-	if err != nil {
-		return nil, err
-	}
-	post.OrganizationID = orgIDStr
-	tc := TenantFromContext(ctx)
-	if tc != nil && tc.OrganizationID != "" && post.OrganizationID != tc.OrganizationID {
+	if !isUUID(id) {
 		return nil, errors.New("post not found")
 	}
-
-	post.ChannelGroupID = groupIDStr
-	post.BatchID = batchIDStr
-	post.SubmittedBy = subStr
-	post.ReviewedBy = revStr
-	if revAtStr != "" {
-		t := parsePGTime(revAtStr)
-		post.ReviewedAt = &t
-	}
-	post.Platform = domain.NormalizePlatform(domain.PlatformType(platformStr))
-	_ = json.Unmarshal([]byte(mediaStr), &post.MediaURLs)
-	post.ScheduledAt = parsePGTime(schedStr)
-	if pubStr != "" {
-		t := parsePGTime(pubStr)
-		post.PublishedAt = &t
-	}
-	if nextRetryStr != "" {
-		t := parsePGTime(nextRetryStr)
-		post.NextRetryAt = &t
-	}
-	post.RetryCount, _ = strconv.Atoi(retryStr)
-	post.MaxRetries, _ = strconv.Atoi(maxRetryStr)
-	post.LastErrorCode, _ = strconv.Atoi(errCodeStr)
-	post.CreatedAt = parsePGTime(createdStr)
-	post.UpdatedAt = parsePGTime(updatedStr)
-	return &post, nil
-}
-
-func (s *PostgresStore) ListPosts(ctx context.Context, statusFilter string, limit int) ([]domain.Post, error) {
-	if err := requireOrganization(ctx); err != nil {
+	query := "SELECT " + postSelectColumns + postSelectFrom + " WHERE p.id = $1::uuid AND p.organization_id = $2;"
+	post, err := scanPost(s.db.QueryRowContext(ctx, query, id, TenantFromContext(ctx).OrganizationID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New("post not found")
+		}
 		return nil, err
 	}
+	if tc := TenantFromContext(ctx); tc.OrganizationID != "" && post.OrganizationID != tc.OrganizationID {
+		return nil, errors.New("post not found")
+	}
+	return post, nil
+}
 
+// ListPosts keeps the historical status/limit listing (newest scheduled first) on top of QueryPosts.
+func (s *PostgresStore) ListPosts(ctx context.Context, statusFilter string, limit int) ([]domain.Post, error) {
+	return s.QueryPosts(ctx, listPostsQuery(statusFilter, limit))
+}
+
+// listPostsQuery preserves the legacy cap: limits outside 1..200 fall back to 50.
+func listPostsQuery(statusFilter string, limit int) domain.PostQuery {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	orgID := TenantFromContext(ctx).OrganizationID
-	var rows *sql.Rows
-	var err error
-
-	baseQuery := `
-	SELECT p.id, p.organization_id::text, p.channel_id, COALESCE(c.name, ''), COALESCE(c.platform, 'FACEBOOK'), COALESCE(c.external_id, ''),
-	       COALESCE(p.channel_group_id::text, ''), COALESCE(p.batch_id::text, ''),
-	       p.content, p.link_url, p.media_type, p.media_urls::text, p.status, p.queue_tier,
-	       p.scheduled_at::text, COALESCE(p.published_at::text, ''), p.external_post_id,
-	       COALESCE(p.submitted_by::text, ''), COALESCE(p.reviewed_by::text, ''), COALESCE(p.reviewed_at::text, ''), p.rejection_note,
-	       p.retry_count::text, p.max_retries::text, COALESCE(p.next_retry_at::text, ''), p.last_error_code::text, p.last_error_message,
-	       p.created_by, p.created_at::text, p.updated_at::text
-	FROM posts p
-	LEFT JOIN channels c ON c.id = p.channel_id `
-
+	q := domain.PostQuery{Limit: limit}
 	if statusFilter != "" {
-		query := baseQuery + `WHERE p.organization_id = $1 AND p.status = $2 ORDER BY p.scheduled_at DESC LIMIT $3;`
-		rows, err = s.db.QueryContext(ctx, query, orgID, statusFilter, limit)
-	} else {
-		query := baseQuery + `WHERE p.organization_id = $1 ORDER BY p.scheduled_at DESC LIMIT $2;`
-		rows, err = s.db.QueryContext(ctx, query, orgID, limit)
+		q.Statuses = []string{statusFilter}
 	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var list []domain.Post
-	for rows.Next() {
-		var post domain.Post
-		var orgIDStr, platformStr, groupIDStr, batchIDStr, mediaStr, schedStr, pubStr string
-		var subStr, revStr, revAtStr, retryStr, maxRetryStr, nextRetryStr, errCodeStr, createdStr, updatedStr string
-		if err := rows.Scan(
-			&post.ID, &orgIDStr, &post.ChannelID, &post.ChannelName, &platformStr, &post.ExternalChannelID,
-			&groupIDStr, &batchIDStr,
-			&post.Content, &post.LinkURL, &post.MediaType, &mediaStr, &post.Status, &post.QueueTier,
-			&schedStr, &pubStr, &post.ExternalPostID,
-			&subStr, &revStr, &revAtStr, &post.RejectionNote,
-			&retryStr, &maxRetryStr, &nextRetryStr, &errCodeStr, &post.LastErrorMessage,
-			&post.CreatedBy, &createdStr, &updatedStr,
-		); err != nil {
-			return nil, err
-		}
-		post.OrganizationID = orgIDStr
-		post.ChannelGroupID = groupIDStr
-		post.BatchID = batchIDStr
-		post.SubmittedBy = subStr
-		post.ReviewedBy = revStr
-		if revAtStr != "" {
-			t := parsePGTime(revAtStr)
-			post.ReviewedAt = &t
-		}
-		post.Platform = domain.NormalizePlatform(domain.PlatformType(platformStr))
-		_ = json.Unmarshal([]byte(mediaStr), &post.MediaURLs)
-		post.ScheduledAt = parsePGTime(schedStr)
-		if pubStr != "" {
-			t := parsePGTime(pubStr)
-			post.PublishedAt = &t
-		}
-		if nextRetryStr != "" {
-			t := parsePGTime(nextRetryStr)
-			post.NextRetryAt = &t
-		}
-		post.RetryCount, _ = strconv.Atoi(retryStr)
-		post.MaxRetries, _ = strconv.Atoi(maxRetryStr)
-		post.LastErrorCode, _ = strconv.Atoi(errCodeStr)
-		post.CreatedAt = parsePGTime(createdStr)
-		post.UpdatedAt = parsePGTime(updatedStr)
-		list = append(list, post)
-	}
-	return list, nil
+	return q
 }
 
 // ClaimDuePosts implements Tenant-Fair Scheduling using:
@@ -513,6 +364,7 @@ func (s *PostgresStore) ClaimDuePosts(ctx context.Context, now time.Time, batchS
 		SELECT p.id
 		FROM posts p
 		JOIN due_candidates dc ON dc.id = p.id
+ WHERE p.organization_id=$3
 		ORDER BY dc.rnum ASC, p.scheduled_at ASC
 		LIMIT $2
 		FOR UPDATE OF p SKIP LOCKED
@@ -520,7 +372,7 @@ func (s *PostgresStore) ClaimDuePosts(ctx context.Context, now time.Time, batchS
 	UPDATE posts p
 	SET status = 'QUEUED', updated_at = NOW()
 	FROM selected
-	WHERE p.id = selected.id
+	WHERE p.id = selected.id AND p.organization_id=$3
 	RETURNING p.id, p.organization_id::text, p.channel_id, p.queue_tier, p.retry_count::text;`
 
 	rows, err := s.db.QueryContext(ctx, query, now, batchSize, TenantFromContext(ctx).OrganizationID)
@@ -572,42 +424,9 @@ func (s *PostgresStore) CancelPost(ctx context.Context, postID string) error {
 	if err := requireOrganization(ctx); err != nil {
 		return err
 	}
-
-	tc := TenantFromContext(ctx)
-	var res sql.Result
-	var err error
-
-	allowedStatuses := "('DRAFT', 'SCHEDULED', 'QUEUED', 'FAILED', 'PENDING_APPROVAL', 'REJECTED')"
-	if tc != nil && tc.OrganizationID != "" {
-		res, err = s.db.ExecContext(
-			ctx,
-			"UPDATE posts SET status = 'CANCELLED', updated_at = NOW() WHERE id = $1 AND organization_id = $2 AND status IN "+allowedStatuses,
-			postID, tc.OrganizationID,
-		)
-	} else {
-		res, err = s.db.ExecContext(
-			ctx,
-			"UPDATE posts SET status = 'CANCELLED', updated_at = NOW() WHERE id = $1 AND status IN "+allowedStatuses,
-			postID,
-		)
-	}
-	if err != nil {
-		return err
-	}
-	rows, err := res.RowsAffected()
-	if err == nil && rows == 0 {
-		existing, getErr := s.GetPostByID(ctx, postID)
-		if getErr != nil || existing == nil {
-			return fmt.Errorf("post %s not found", postID)
-		}
-		return fmt.Errorf("post %s cannot be cancelled (status: %s)", postID, existing.Status)
-	}
-	return nil
+	res, err := s.db.ExecContext(ctx, "UPDATE posts SET status='CANCELLED',updated_at=NOW() WHERE id=$1 AND organization_id=$2 AND status IN ('DRAFT','SCHEDULED','QUEUED','FAILED','PENDING_APPROVAL','REJECTED')", postID, TenantFromContext(ctx).OrganizationID)
+	return affected(res, err)
 }
-
-// ----------------------------------------------------------------------------
-// Users Implementation (Postgres)
-// ----------------------------------------------------------------------------
 
 func (s *PostgresStore) CreateUser(ctx context.Context, u *domain.User) (*domain.User, error) {
 	query := `
@@ -1064,20 +883,25 @@ func (s *PostgresStore) GetChannelGroupByID(ctx context.Context, orgID string, g
 	SELECT c.id, c.organization_id::text, c.platform, c.external_id, c.name, c.category, c.token_status, c.is_active::text
 	FROM channels c
 	JOIN channel_group_items cgi ON cgi.channel_id = c.id
-	WHERE cgi.channel_group_id = $1;`
+	WHERE cgi.channel_group_id = $1 AND c.organization_id = $2;`
 
-	chRows, err := s.db.QueryContext(ctx, chQuery, groupID)
-	if err == nil {
-		defer chRows.Close()
-		for chRows.Next() {
-			var ch domain.Channel
-			var platStr, actStr string
-			if err := chRows.Scan(&ch.ID, &ch.OrganizationID, &platStr, &ch.ExternalID, &ch.Name, &ch.Category, &ch.TokenStatus, &actStr); err == nil {
-				ch.Platform = domain.NormalizePlatform(domain.PlatformType(platStr))
-				ch.IsActive = actStr == "true" || actStr == "t"
-				g.Channels = append(g.Channels, ch)
-			}
+	chRows, err := s.db.QueryContext(ctx, chQuery, groupID, orgID)
+	if err != nil {
+		return nil, err // never return a group with silently missing channels: approval rules depend on them
+	}
+	defer chRows.Close()
+	for chRows.Next() {
+		var ch domain.Channel
+		var platStr, actStr string
+		if err := chRows.Scan(&ch.ID, &ch.OrganizationID, &platStr, &ch.ExternalID, &ch.Name, &ch.Category, &ch.TokenStatus, &actStr); err != nil {
+			return nil, err
 		}
+		ch.Platform = domain.NormalizePlatform(domain.PlatformType(platStr))
+		ch.IsActive = actStr == "true" || actStr == "t"
+		g.Channels = append(g.Channels, ch)
+	}
+	if err := chRows.Err(); err != nil {
+		return nil, err
 	}
 	return &g, nil
 }
@@ -1330,18 +1154,11 @@ func (s *PostgresStore) ReviewPost(ctx context.Context, postID string, reviewerI
 	}
 	defer tx.Rollback()
 
-	approvalQuery := `
-	INSERT INTO post_approvals (post_id, reviewer_id, action, note, created_at)
-	VALUES ($1, $2, $3, $4, NOW());`
-	if _, err := tx.ExecContext(ctx, approvalQuery, postID, reviewerID, string(action), feedbackNote); err != nil {
+	result, err := tx.ExecContext(ctx, "UPDATE posts SET status=$1,reviewed_by=$2,reviewed_at=NOW(),rejection_note=$3,updated_at=NOW() WHERE id=$4 AND organization_id=$5 AND status='PENDING_APPROVAL'", newStatus, reviewerID, feedbackNote, postID, TenantFromContext(ctx).OrganizationID)
+	if err = affected(result, err); err != nil {
 		return nil, err
 	}
-
-	postQuery := `
-	UPDATE posts
-	SET status = $1, reviewed_by = $2, reviewed_at = NOW(), rejection_note = $3, updated_at = NOW()
-	WHERE id = $4 AND organization_id = $5;`
-	if _, err := tx.ExecContext(ctx, postQuery, newStatus, reviewerID, feedbackNote, postID, TenantFromContext(ctx).OrganizationID); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO post_approvals(post_id,reviewer_id,action,note,created_at) VALUES($1,$2,$3,$4,NOW())", postID, reviewerID, string(action), feedbackNote); err != nil {
 		return nil, err
 	}
 
@@ -1379,9 +1196,10 @@ func (s *PostgresStore) ResubmitPost(ctx context.Context, postID string, content
 	    reviewed_by = NULL,
 	    reviewed_at = NULL,
 	    updated_at = NOW()
-	WHERE id = $3 AND organization_id = $4;`
+	WHERE id = $3 AND organization_id = $4 AND status IN ('DRAFT','REJECTED');`
 
-	if _, err := s.db.ExecContext(ctx, query, content, schedArg, postID, TenantFromContext(ctx).OrganizationID); err != nil {
+	result, err := s.db.ExecContext(ctx, query, content, schedArg, postID, TenantFromContext(ctx).OrganizationID)
+	if err = affected(result, err); err != nil {
 		return nil, err
 	}
 
@@ -1659,7 +1477,13 @@ func parsePGTime(raw string) time.Time {
 // InMemoryStore: Used for unit testing and offline execution
 // ============================================================================
 
+type oauthState struct {
+	OrgID, UserID string
+	Expires       time.Time
+}
+
 type InMemoryStore struct {
+	oauthStates             map[string]oauthState
 	mu                      sync.RWMutex
 	users                   map[string]*domain.User
 	usersByEmail            map[string]string // email -> user.ID
@@ -1671,6 +1495,7 @@ type InMemoryStore struct {
 	channelGroupPermissions map[string]*domain.ChannelGroupPermission // perm.ID -> perm
 	channels                map[string]*domain.Channel
 	posts                   map[string]*domain.Post
+	batches                 map[string]*domain.PostBatch
 	postApprovals           map[string][]domain.PostApproval // post.ID -> []PostApproval
 	logs                    map[string][]domain.PublishLog
 	media                   map[string]*domain.MediaAsset
@@ -1690,6 +1515,7 @@ func NewInMemoryStore() *InMemoryStore {
 		channelGroupPermissions: make(map[string]*domain.ChannelGroupPermission),
 		channels:                make(map[string]*domain.Channel),
 		posts:                   make(map[string]*domain.Post),
+		batches:                 make(map[string]*domain.PostBatch),
 		postApprovals:           make(map[string][]domain.PostApproval),
 		logs:                    make(map[string][]domain.PublishLog),
 		media:                   make(map[string]*domain.MediaAsset),
@@ -1795,6 +1621,12 @@ func (m *InMemoryStore) UpsertChannel(ctx context.Context, channel *domain.Chann
 		}
 	}
 
+	if channel.ID != "" {
+		if _, exists := m.channels[channel.ID]; exists {
+			return nil, errors.New("entity ID already exists")
+		}
+	}
+
 	if channel.ID == "" {
 		channel.ID = newUUID()
 	}
@@ -1836,7 +1668,7 @@ func (m *InMemoryStore) GetChannelByID(ctx context.Context, id string) (*domain.
 	defer m.mu.RUnlock()
 
 	c, ok := m.channels[id]
-	if !ok {
+	if !ok || c.OrganizationID != TenantFromContext(ctx).OrganizationID {
 		return nil, errors.New("channel not found")
 	}
 	tc := TenantFromContext(ctx)
@@ -1925,44 +1757,17 @@ func (m *InMemoryStore) CreatePost(ctx context.Context, post *domain.Post) (*dom
 	if err := requireOrganization(ctx); err != nil {
 		return nil, err
 	}
-	if post.OrganizationID != "" && post.OrganizationID != TenantFromContext(ctx).OrganizationID {
-		err := errors.New("organization mismatch")
-		return nil, err
+	tc := TenantFromContext(ctx)
+	if post.OrganizationID != "" && post.OrganizationID != tc.OrganizationID {
+		return nil, errors.New("organization mismatch")
 	}
-
 	if _, err := m.GetChannelByID(ctx, post.ChannelID); err != nil {
 		return nil, err
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	tc := TenantFromContext(ctx)
-	if post.OrganizationID == "" {
-		post.OrganizationID = tc.OrganizationID
-	}
-	if post.CreatedBy == "" {
-		post.CreatedBy = tc.UserID
-	}
-
-	if post.ID == "" {
-		post.ID = newUUID()
-	}
-	post.QueueTier = domain.DetermineQueueTier(post.MediaType)
-	if post.MaxRetries <= 0 {
-		post.MaxRetries = 3
-	}
-	if ch, ok := m.channels[post.ChannelID]; ok {
-		post.ChannelName = ch.Name
-		post.Platform = ch.Platform
-		post.ExternalChannelID = ch.ExternalID
-	}
-	now := time.Now().UTC()
-	post.CreatedAt = now
-	post.UpdatedAt = now
-	cp := *post
-	m.posts[cp.ID] = &cp
-	return &cp, nil
+	return m.insertPostLocked(post, tc, time.Now().UTC())
 }
 
 func (m *InMemoryStore) GetPostByID(ctx context.Context, id string) (*domain.Post, error) {
@@ -1974,57 +1779,16 @@ func (m *InMemoryStore) GetPostByID(ctx context.Context, id string) (*domain.Pos
 	defer m.mu.RUnlock()
 
 	p, ok := m.posts[id]
-	if !ok {
+	if !ok || p.OrganizationID != TenantFromContext(ctx).OrganizationID {
 		return nil, errors.New("post not found")
 	}
-	tc := TenantFromContext(ctx)
-	if tc != nil && tc.OrganizationID != "" && p.OrganizationID != tc.OrganizationID {
-		return nil, errors.New("post not found")
-	}
-
-	cp := *p
-	if ch, exists := m.channels[cp.ChannelID]; exists {
-		cp.ChannelName = ch.Name
-		cp.Platform = ch.Platform
-		cp.ExternalChannelID = ch.ExternalID
-	}
+	cp := m.enrichPost(p)
 	return &cp, nil
 }
 
+// ListPosts keeps the historical status/limit listing on top of QueryPosts (parity with PostgresStore).
 func (m *InMemoryStore) ListPosts(ctx context.Context, statusFilter string, limit int) ([]domain.Post, error) {
-	if err := requireOrganization(ctx); err != nil {
-		return nil, err
-	}
-
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	orgID := TenantFromContext(ctx).OrganizationID
-	var list []domain.Post
-	for _, p := range m.posts {
-		if p.OrganizationID != orgID {
-			continue
-		}
-		if statusFilter != "" && p.Status != statusFilter {
-			continue
-		}
-		cp := *p
-		if ch, exists := m.channels[cp.ChannelID]; exists {
-			cp.ChannelName = ch.Name
-			cp.Platform = ch.Platform
-			cp.ExternalChannelID = ch.ExternalID
-		}
-		list = append(list, cp)
-	}
-
-	sort.Slice(list, func(i, j int) bool {
-		return list[i].ScheduledAt.After(list[j].ScheduledAt)
-	})
-
-	if limit > 0 && len(list) > limit {
-		list = list[:limit]
-	}
-	return list, nil
+	return m.QueryPosts(ctx, listPostsQuery(statusFilter, limit))
 }
 
 // ClaimDuePosts implements Tenant-Fair Scheduling for InMemoryStore.
@@ -2094,6 +1858,10 @@ func (m *InMemoryStore) MarkPostProcessing(ctx context.Context, postID string) e
 	if !ok || p.OrganizationID != TenantFromContext(ctx).OrganizationID {
 		return errors.New("post not found")
 	}
+	if p.Status != domain.PostStatusQueued && p.Status != domain.PostStatusScheduled && p.Status != domain.PostStatusFailed {
+		return errors.New("post is not eligible for processing")
+	}
+
 	p.Status = domain.PostStatusProcessing
 	p.UpdatedAt = time.Now().UTC()
 	return nil
@@ -2435,6 +2203,12 @@ func (m *InMemoryStore) CreateChannelGroup(ctx context.Context, g *domain.Channe
 	if g.OrganizationID == "" {
 		g.OrganizationID = TenantFromContext(ctx).OrganizationID
 	}
+	if g.ID != "" {
+		if _, exists := m.channelGroups[g.ID]; exists {
+			return nil, errors.New("entity ID already exists")
+		}
+	}
+
 	if g.ID == "" {
 		g.ID = newUUID()
 	}
@@ -2728,7 +2502,7 @@ func (m *InMemoryStore) ReviewPost(ctx context.Context, postID string, reviewerI
 	defer m.mu.Unlock()
 
 	p, ok := m.posts[postID]
-	if !ok {
+	if !ok || p.OrganizationID != TenantFromContext(ctx).OrganizationID {
 		return nil, errors.New("post not found")
 	}
 	if !p.CanReview() {
@@ -2779,7 +2553,7 @@ func (m *InMemoryStore) ResubmitPost(ctx context.Context, postID string, content
 	defer m.mu.Unlock()
 
 	p, ok := m.posts[postID]
-	if !ok {
+	if !ok || p.OrganizationID != TenantFromContext(ctx).OrganizationID {
 		return nil, errors.New("post not found")
 	}
 	if p.Status != domain.PostStatusRejected && p.Status != domain.PostStatusDraft {
@@ -2919,6 +2693,12 @@ func (m *InMemoryStore) CreateMediaAsset(ctx context.Context, asset *domain.Medi
 	if asset.OrganizationID == "" {
 		asset.OrganizationID = TenantFromContext(ctx).OrganizationID
 	}
+	if asset.ID != "" {
+		if _, exists := m.media[asset.ID]; exists {
+			return nil, errors.New("entity ID already exists")
+		}
+	}
+
 	if asset.ID == "" {
 		asset.ID = newUUID()
 	}
@@ -3031,4 +2811,102 @@ func (m *InMemoryStore) ClaimLegacyWorkspace(ctx context.Context, userID string)
 		}
 	}
 	return errors.New("legacy workspace already claimed")
+}
+
+func (s *PostgresStore) RegisterAccount(ctx context.Context, user *domain.User, orgName string) (*domain.User, *domain.Organization, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC()
+	user.ID = newUUID()
+	user.CreatedAt = now
+	user.UpdatedAt = now
+	org := &domain.Organization{ID: newUUID(), Name: orgName, CreatedAt: now, UpdatedAt: now}
+	org.Slug = "workspace-" + org.ID
+	if _, err = tx.ExecContext(ctx, "INSERT INTO users(id,email,password_hash,full_name,is_active,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$6)", user.ID, user.Email, user.PasswordHash, user.FullName, user.IsActive, now); err != nil {
+		return nil, nil, err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO organizations(id,name,slug,created_at,updated_at) VALUES($1,$2,$3,$4,$4)", org.ID, org.Name, org.Slug, now); err != nil {
+		return nil, nil, err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO organization_members(organization_id,user_id,org_role) VALUES($1,$2,'OWNER')", org.ID, user.ID); err != nil {
+		return nil, nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	return user, org, nil
+}
+func (m *InMemoryStore) RegisterAccount(ctx context.Context, user *domain.User, orgName string) (*domain.User, *domain.Organization, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	email := strings.ToLower(user.Email)
+	if _, exists := m.usersByEmail[email]; exists {
+		return nil, nil, errors.New("email already registered")
+	}
+	now := time.Now().UTC()
+	user.ID = newUUID()
+	user.CreatedAt = now
+	user.UpdatedAt = now
+	copyUser := *user
+	org := &domain.Organization{ID: newUUID(), Name: orgName, CreatedAt: now, UpdatedAt: now}
+	org.Slug = "workspace-" + org.ID
+	copyOrg := *org
+	member := &domain.OrganizationMember{ID: newUUID(), OrganizationID: org.ID, UserID: user.ID, OrgRole: domain.OrgRoleOwner, CreatedAt: now, UpdatedAt: now}
+	m.users[user.ID] = &copyUser
+	m.usersByEmail[email] = user.ID
+	m.organizations[org.ID] = &copyOrg
+	m.members[member.ID] = member
+	return user, org, nil
+}
+func (s *PostgresStore) CreateOAuthState(ctx context.Context, hash string, expires time.Time) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM oauth_states WHERE expires_at<NOW()"); err != nil {
+		return err
+	}
+
+	_, err := s.db.ExecContext(ctx, "INSERT INTO oauth_states(state_hash,user_id,organization_id,expires_at) VALUES($1,$2,$3,$4)", hash, TenantFromContext(ctx).UserID, TenantFromContext(ctx).OrganizationID, expires)
+	return err
+}
+func (s *PostgresStore) ConsumeOAuthState(ctx context.Context, hash string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx, "DELETE FROM oauth_states WHERE state_hash=$1 AND user_id=$2 AND organization_id=$3 AND expires_at>NOW()", hash, TenantFromContext(ctx).UserID, TenantFromContext(ctx).OrganizationID)
+	return affected(res, err)
+}
+func (m *InMemoryStore) CreateOAuthState(ctx context.Context, hash string, expires time.Time) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.oauthStates == nil {
+		m.oauthStates = make(map[string]oauthState)
+	}
+	for key, state := range m.oauthStates {
+		if !state.Expires.After(time.Now()) {
+			delete(m.oauthStates, key)
+		}
+	}
+
+	m.oauthStates[hash] = oauthState{OrgID: TenantFromContext(ctx).OrganizationID, UserID: TenantFromContext(ctx).UserID, Expires: expires}
+	return nil
+}
+func (m *InMemoryStore) ConsumeOAuthState(ctx context.Context, hash string) error {
+	if err := requireOrganization(ctx); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state, exists := m.oauthStates[hash]
+	if !exists || state.OrgID != TenantFromContext(ctx).OrganizationID || state.UserID != TenantFromContext(ctx).UserID || !state.Expires.After(time.Now()) {
+		return errors.New("OAuth state invalid or already consumed")
+	}
+	delete(m.oauthStates, hash)
+	return nil
 }

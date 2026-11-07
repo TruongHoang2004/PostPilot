@@ -32,6 +32,7 @@ export default function DataDeletionPage() {
         <h2 id="scope">3. Phạm vi dữ liệu trong PostPilot</h2>
         <p>Tùy phạm vi yêu cầu đã xác minh, việc xử lý có thể bao gồm:</p>
         <ul>
+          <li>Thông tin tài khoản, email và membership liên quan đến bạn; người vận hành sẽ xác minh phạm vi để không xóa dữ liệu workspace chung của người khác.</li>
           <li>Thông tin Page kết nối và access token được lưu trong ứng dụng.</li>
           <li>Bài viết, lịch đăng chưa thực hiện, lịch sử và nhật ký đăng liên quan đến Page.</li>
           <li>Ảnh, video, thông tin tệp và các bản sao tệp do PostPilot quản lý thuộc phạm vi yêu cầu.</li>

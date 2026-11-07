@@ -2,6 +2,13 @@ import {
   AIGenerateResponse,
   ApprovalAction,
   AuditLog,
+  BulkCreateResponse,
+  BulkPreview,
+  BulkRequest,
+  PostBatch,
+  PostPage,
+  PostPatch,
+  PostQuery,
   Channel,
   ChannelGroup,
   ChannelGroupPermission,
@@ -44,11 +51,23 @@ function getHeaders(customHeaders?: HeadersInit): Headers {
   return headers;
 }
 
+const responseTokens = new WeakMap<Response, string | null>();
+async function fetchWithIdentity(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const authorization = new Headers(init?.headers).get("Authorization");
+  const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
+  const response = await fetch(input, init);
+  responseTokens.set(response, token);
+  return response;
+}
+function expireMatchingSession(token: string | null | undefined) {
+  if (token && typeof window !== "undefined" && api.getToken() === token) {
+    api.clearAuth(); window.dispatchEvent(new Event("postpilot-session-expired"));
+  }
+}
+
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
-    if (res.status === 401 && typeof window !== "undefined" && !res.url.endsWith("/auth/login")) {
-      api.clearAuth(); window.dispatchEvent(new Event("postpilot-session-expired"));
-    }
+    if (res.status === 401) expireMatchingSession(responseTokens.get(res));
     let errorMsg = `HTTP Error ${res.status}`;
     try {
       const data = await res.json();
@@ -100,7 +119,7 @@ export const api = {
 
   // 1. Health & Stats
   async getHealth(): Promise<SystemHealth> {
-    const res = await fetch(`${API_BASE}/healthz`, {
+    const res = await fetchWithIdentity(`${API_BASE}/healthz`, {
       cache: "no-store",
       headers: getHeaders(),
     });
@@ -108,7 +127,7 @@ export const api = {
   },
 
   async getStats(): Promise<SystemStats> {
-    const res = await fetch(`${API_BASE}/api/v1/stats`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/stats`, {
       cache: "no-store",
       headers: getHeaders(),
     });
@@ -121,7 +140,7 @@ export const api = {
     password: string,
     fullName: string
   ): Promise<{ token: string; user: User; organization: Organization }> {
-    const res = await fetch(`${API_BASE}/api/v1/auth/register`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/auth/register`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ email, password, full_name: fullName }),
@@ -140,7 +159,7 @@ export const api = {
     email: string,
     password: string
   ): Promise<{ token: string; user: User; organizations: Organization[] }> {
-    const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/auth/login`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ email, password }),
@@ -156,21 +175,26 @@ export const api = {
   },
 
   async getMe(): Promise<{ user: User; organization: Organization; member?: OrganizationMember; channel_roles?: Record<string, GroupRole> }> {
-    const res = await fetch(`${API_BASE}/api/v1/auth/me`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/auth/me`, {
       cache: "no-store",
       headers: getHeaders(),
     });
     return handleResponse<{ user: User; organization: Organization; member?: OrganizationMember; channel_roles?: Record<string, GroupRole> }>(res);
   },
 
+  async acceptInvitation(token: string): Promise<void> {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/invitations/accept`, {method: "POST", headers: getHeaders({"Content-Type":"application/json"}), body: JSON.stringify({token})});
+    await handleResponse(res);
+  },
+
   async claimLegacyWorkspace(adminKey: string): Promise<void> {
-    const res = await fetch(`${API_BASE}/api/v1/auth/claim-legacy-workspace`, { method: "POST", headers: getHeaders({"X-Admin-Key": adminKey}) });
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/auth/claim-legacy-workspace`, { method: "POST", headers: getHeaders({"X-Admin-Key": adminKey}) });
     await handleResponse(res);
   },
 
   // 3. Organization Workspace Management
   async getOrganizations(): Promise<Organization[]> {
-    const res = await fetch(`${API_BASE}/api/v1/organizations`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/organizations`, {
       cache: "no-store",
       headers: getHeaders(),
     });
@@ -179,7 +203,7 @@ export const api = {
   },
 
   async createOrganization(name: string, slug?: string): Promise<Organization> {
-    const res = await fetch(`${API_BASE}/api/v1/organizations`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/organizations`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ name, slug: slug || "" }),
@@ -188,7 +212,7 @@ export const api = {
   },
 
   async getOrgMembers(orgId: string): Promise<OrganizationMember[]> {
-    const res = await fetch(`${API_BASE}/api/v1/organizations/${orgId}/members`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/organizations/${orgId}/members`, {
       cache: "no-store",
       headers: getHeaders(),
     });
@@ -201,7 +225,7 @@ export const api = {
     email: string,
     role: OrgRole
   ): Promise<{ message: string; member?: OrganizationMember; channel_roles?: Record<string, GroupRole>; invitation?: OrganizationInvitation; token?: string }> {
-    const res = await fetch(`${API_BASE}/api/v1/organizations/${orgId}/members`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/organizations/${orgId}/members`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ email, role }),
@@ -210,7 +234,7 @@ export const api = {
   },
 
   async removeOrgMember(orgId: string, memberId: string): Promise<{ message: string }> {
-    const res = await fetch(`${API_BASE}/api/v1/organizations/${orgId}/members/${memberId}`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/organizations/${orgId}/members/${memberId}`, {
       method: "DELETE",
       headers: getHeaders(),
     });
@@ -219,7 +243,7 @@ export const api = {
 
   // 4. Channel Groups & RBAC
   async getChannelGroups(): Promise<ChannelGroup[]> {
-    const res = await fetch(`${API_BASE}/api/v1/channel-groups`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/channel-groups`, {
       cache: "no-store",
       headers: getHeaders(),
     });
@@ -233,7 +257,7 @@ export const api = {
     color_code?: string;
     require_approval?: boolean;
   }): Promise<ChannelGroup> {
-    const res = await fetch(`${API_BASE}/api/v1/channel-groups`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/channel-groups`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(group),
@@ -242,7 +266,7 @@ export const api = {
   },
 
   async deleteChannelGroup(id: string): Promise<{ message: string }> {
-    const res = await fetch(`${API_BASE}/api/v1/channel-groups/${id}`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/channel-groups/${id}`, {
       method: "DELETE",
       headers: getHeaders(),
     });
@@ -254,7 +278,7 @@ export const api = {
     group_id: string;
     channel_ids: string[];
   }> {
-    const res = await fetch(`${API_BASE}/api/v1/channel-groups/${groupId}/channels`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/channel-groups/${groupId}/channels`, {
       method: "PUT",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ channel_ids: channelIds }),
@@ -263,7 +287,7 @@ export const api = {
   },
 
   async getChannelGroupPermissions(groupId: string): Promise<ChannelGroupPermission[]> {
-    const res = await fetch(`${API_BASE}/api/v1/channel-groups/${groupId}/permissions`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/channel-groups/${groupId}/permissions`, {
       cache: "no-store",
       headers: getHeaders(),
     });
@@ -276,7 +300,7 @@ export const api = {
     memberIdOrUserId: string,
     role: GroupRole
   ): Promise<{ message: string; permission: ChannelGroupPermission }> {
-    const res = await fetch(`${API_BASE}/api/v1/channel-groups/${groupId}/permissions`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/channel-groups/${groupId}/permissions`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ member_id: memberIdOrUserId, user_id: memberIdOrUserId, role }),
@@ -285,7 +309,7 @@ export const api = {
   },
 
   async deleteChannelGroupPermission(groupId: string, memberId: string): Promise<{ message: string }> {
-    const res = await fetch(`${API_BASE}/api/v1/channel-groups/${groupId}/permissions/${memberId}`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/channel-groups/${groupId}/permissions/${memberId}`, {
       method: "DELETE",
       headers: getHeaders(),
     });
@@ -294,7 +318,7 @@ export const api = {
 
   // 5. Channels & Platform OAuth
   async getChannels(): Promise<Channel[]> {
-    const res = await fetch(`${API_BASE}/api/v1/channels`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/channels`, {
       cache: "no-store",
       headers: getHeaders(),
     });
@@ -309,7 +333,7 @@ export const api = {
     category?: string;
     access_token: string;
   }): Promise<Channel> {
-    const res = await fetch(`${API_BASE}/api/v1/channels`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/channels`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(channel),
@@ -318,7 +342,7 @@ export const api = {
   },
 
   async deleteChannel(channelID: string): Promise<{ message: string; channel_id: string }> {
-    const res = await fetch(`${API_BASE}/api/v1/channels/${channelID}`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/channels/${channelID}`, {
       method: "DELETE",
       headers: getHeaders(),
     });
@@ -326,7 +350,7 @@ export const api = {
   },
 
   async verifyChannelToken(channelID: string): Promise<VerifyTokenResponse> {
-    const res = await fetch(`${API_BASE}/api/v1/channels/${channelID}/verify-token`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/channels/${channelID}/verify-token`, {
       method: "POST",
       headers: getHeaders(),
     });
@@ -338,7 +362,7 @@ export const api = {
     imported_count: number;
     channels: Channel[];
   }> {
-    const res = await fetch(`${API_BASE}/api/v1/auth/facebook/exchange-token`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/auth/facebook/exchange-token`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ short_lived_user_token: shortLivedUserToken }),
@@ -347,7 +371,7 @@ export const api = {
   },
 
   async getFBOAuthLoginUrl(): Promise<string> {
-    const res = await fetch(`${API_BASE}/api/v1/auth/facebook/login`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/auth/facebook/login`, {
       cache: "no-store",
       headers: getHeaders(),
     });
@@ -357,20 +381,71 @@ export const api = {
 
   // 6. Posts, Scheduling & Approval Workflows
   async getPosts(status?: string, limit = 50): Promise<Post[]> {
-    const params = new URLSearchParams();
-    if (status && status !== "ALL") params.set("status", status);
-    if (limit > 0) params.set("limit", limit.toString());
+    return api.queryPosts({ status, limit });
+  },
 
-    const res = await fetch(`${API_BASE}/api/v1/posts?${params.toString()}`, {
+  /** Tenant posts filtered by status, channel, batch and scheduled window (ascending when a window is given). */
+  async queryPosts(query: PostQuery = {}): Promise<Post[]> {
+    return (await api.queryPostsPage(query)).posts;
+  },
+
+  /** Same as queryPosts but keeps the server paging envelope (normalised limit/offset, has_more). */
+  async queryPostsPage(query: PostQuery = {}): Promise<PostPage> {
+    const params = new URLSearchParams();
+    if (query.status && query.status !== "ALL") params.set("status", query.status);
+    if (query.channel_id) params.set("channel_id", query.channel_id);
+    if (query.batch_id) params.set("batch_id", query.batch_id);
+    if (query.from) params.set("from", query.from);
+    if (query.to) params.set("to", query.to);
+    if (query.limit && query.limit > 0) params.set("limit", String(query.limit));
+    if (query.offset && query.offset > 0) params.set("offset", String(query.offset));
+
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/posts?${params.toString()}`, {
       cache: "no-store",
       headers: getHeaders(),
     });
-    const data = await handleResponse<{ posts: Post[] }>(res);
-    return data.posts || [];
+    const data = await handleResponse<Partial<PostPage>>(res);
+    const posts = data.posts || [];
+    return { posts, limit: data.limit ?? query.limit ?? 50, offset: data.offset ?? query.offset ?? 0, has_more: data.has_more ?? false };
+  },
+
+  async previewBulk(payload: BulkRequest): Promise<BulkPreview> {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/posts/bulk/preview`, {
+      method: "POST",
+      headers: getHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<BulkPreview>(res);
+  },
+
+  async createBulk(payload: BulkRequest): Promise<BulkCreateResponse> {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/posts/bulk`, {
+      method: "POST",
+      headers: getHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<BulkCreateResponse>(res);
+  },
+
+  async updatePost(id: string, patch: PostPatch): Promise<Post> {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/posts/${id}`, {
+      method: "PATCH",
+      headers: getHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify(patch),
+    });
+    return handleResponse<Post>(res);
+  },
+
+  async getPostBatch(id: string): Promise<{ batch: PostBatch; posts: Post[] }> {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/posts/batches/${id}`, {
+      cache: "no-store",
+      headers: getHeaders(),
+    });
+    return handleResponse<{ batch: PostBatch; posts: Post[] }>(res);
   },
 
   async getPostDetail(id: string): Promise<{ post: Post; publish_logs: PublishLog[] }> {
-    const res = await fetch(`${API_BASE}/api/v1/posts/${id}`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/posts/${id}`, {
       cache: "no-store",
       headers: getHeaders(),
     });
@@ -390,7 +465,7 @@ export const api = {
     submit_for_approval?: boolean;
     max_retries?: number;
   }): Promise<any> {
-    const res = await fetch(`${API_BASE}/api/v1/posts`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/posts`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
@@ -399,7 +474,7 @@ export const api = {
   },
 
   async publishPostNow(id: string, sync = true): Promise<any> {
-    const res = await fetch(`${API_BASE}/api/v1/posts/${id}/publish-now?sync=${sync}`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/posts/${id}/publish-now?sync=${sync}`, {
       method: "POST",
       headers: getHeaders(),
     });
@@ -407,7 +482,7 @@ export const api = {
   },
 
   async cancelPost(id: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/api/v1/posts/${id}/cancel`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/posts/${id}/cancel`, {
       method: "POST",
       headers: getHeaders(),
     });
@@ -418,7 +493,7 @@ export const api = {
     id: string,
     payload?: { content?: string; scheduled_at?: string }
   ): Promise<Post> {
-    const res = await fetch(`${API_BASE}/api/v1/posts/${id}/submit-approval`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/posts/${id}/submit-approval`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload || {}),
@@ -430,7 +505,7 @@ export const api = {
     id: string,
     payload: { action: ApprovalAction; note?: string; apply_to_batch?: boolean }
   ): Promise<Post> {
-    const res = await fetch(`${API_BASE}/api/v1/posts/${id}/review`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/posts/${id}/review`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
@@ -451,13 +526,13 @@ export const api = {
       const formData = new FormData();
       formData.append("file", file);
 
+      const uploadToken = api.getToken();
       const xhr = new XMLHttpRequest();
       xhr.open("POST", `${API_BASE}/api/v1/media/upload`, true);
 
       // Inject tenant, auth and simulation headers
       if (typeof window !== "undefined") {
-        const token = localStorage.getItem(STORAGE_KEYS.TOKEN);
-        if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+        if (uploadToken) xhr.setRequestHeader("Authorization", `Bearer ${uploadToken}`);
         const orgId = localStorage.getItem(STORAGE_KEYS.ORG);
         if (orgId) xhr.setRequestHeader("X-Organization-Id", orgId);
       }
@@ -474,6 +549,7 @@ export const api = {
       }
 
       xhr.onload = () => {
+        if (xhr.status === 401) expireMatchingSession(uploadToken);
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             const data = JSON.parse(xhr.responseText);
@@ -501,7 +577,7 @@ export const api = {
 
   // 8. Audit Logs
   async getAuditLogs(limit = 50): Promise<AuditLog[]> {
-    const res = await fetch(`${API_BASE}/api/v1/audit-logs?limit=${limit}`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/audit-logs?limit=${limit}`, {
       cache: "no-store",
       headers: getHeaders(),
     });
@@ -514,7 +590,7 @@ export const api = {
     topic: string,
     tone = "chuyên nghiệp, lôi cuốn, tạo tương tác"
   ): Promise<AIGenerateResponse> {
-    const res = await fetch(`${API_BASE}/api/v1/ai/generate`, {
+    const res = await fetchWithIdentity(`${API_BASE}/api/v1/ai/generate`, {
       method: "POST",
       headers: getHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ topic, tone }),

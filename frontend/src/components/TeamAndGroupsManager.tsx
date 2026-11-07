@@ -35,6 +35,8 @@ export function TeamAndGroupsManager() {
   const { currentOrg, canManageOrg, channelGroups, refreshGroups } = useOrg();
   const { confirm, toast } = useDialog();
 
+  const [inviteToken, setInviteToken] = useState("");
+  const [joining, setJoining] = useState(false);
   const [legacyKey, setLegacyKey] = useState("");
   const [claimingLegacy, setClaimingLegacy] = useState(false);
   const { refreshOrgs } = useOrg();
@@ -61,7 +63,6 @@ export function TeamAndGroupsManager() {
   const [showCreateGroupModal, setShowCreateGroupModal] = useState<boolean>(false);
   const [newGroupName, setNewGroupName] = useState<string>("");
   const [newGroupDesc, setNewGroupDesc] = useState<string>("");
-  const [newGroupColor, setNewGroupColor] = useState<string>("blue");
   const [newGroupRequireApproval, setNewGroupRequireApproval] = useState<boolean>(false);
   const [isCreatingGroup, setIsCreatingGroup] = useState<boolean>(false);
 
@@ -186,7 +187,6 @@ export function TeamAndGroupsManager() {
       await api.createChannelGroup({
         name: newGroupName.trim(),
         description: newGroupDesc.trim(),
-        color_code: newGroupColor,
         require_approval: newGroupRequireApproval,
       });
 
@@ -194,7 +194,6 @@ export function TeamAndGroupsManager() {
       setShowCreateGroupModal(false);
       setNewGroupName("");
       setNewGroupDesc("");
-      setNewGroupColor("blue");
       setNewGroupRequireApproval(false);
       refreshGroups();
       fetchAuditLogs();
@@ -310,6 +309,16 @@ export function TeamAndGroupsManager() {
 
   return (
     <div className="space-y-6">
+      <form className="mb-6 flex flex-wrap gap-3 rounded-xl border p-4 dark:border-slate-700" onSubmit={async e => {
+        e.preventDefault(); setJoining(true);
+        try {await api.acceptInvitation(inviteToken.trim());setInviteToken("");await refreshOrgs();toast("Đã tham gia workspace. Chọn workspace mới ở thanh trên.", "success");}
+        catch(e) {toast(e instanceof Error ? e.message : "Không thể nhận lời mời", "danger");}
+        finally {setJoining(false);}
+      }}>
+        <label className="w-full text-sm font-semibold" htmlFor="invitation-token">Tham gia workspace bằng mã lời mời</label>
+        <input id="invitation-token" value={inviteToken} onChange={e => setInviteToken(e.target.value)} required className="min-w-0 flex-1 rounded-lg border p-2 text-slate-900" />
+        <button disabled={joining} className="rounded-lg bg-blue-600 px-4 py-2 text-white">{joining ? "Đang xử lý…" : "Nhận lời mời"}</button>
+      </form>
       {canManageOrg && <details className="mb-6 rounded-xl border border-slate-300 p-4 dark:border-slate-700">
         <summary className="cursor-pointer text-sm font-semibold">Nhận workspace từ phiên bản cũ (một lần)</summary>
         <p className="mt-3 text-sm">Nếu Page và bài cũ ở Default Workspace, nhập API_ADMIN_KEY của máy chủ để chuyển quyền quản lý sang tài khoản đang đăng nhập. Khóa chỉ gửi cho thao tác này, không được lưu trong trình duyệt.</p>
@@ -778,42 +787,6 @@ export function TeamAndGroupsManager() {
                 />
               </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Màu sắc nhận diện
-                </label>
-                <div className="flex gap-2">
-                  {Object.keys(colorVariants).map((col) => (
-                    <button
-                      key={col}
-                      type="button"
-                      onClick={() => setNewGroupColor(col)}
-                      className={`h-7 w-7 rounded-lg border-2 capitalize text-[10px] font-bold flex items-center justify-center transition-all ${
-                        newGroupColor === col
-                          ? "border-blue-600 scale-110 shadow-sm"
-                          : "border-transparent opacity-70 hover:opacity-100"
-                      } ${colorVariants[col].bg} ${colorVariants[col].text}`}
-                    >
-                      {col.charAt(0).toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <label className="flex items-center gap-2.5 p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={newGroupRequireApproval}
-                  onChange={(e) => setNewGroupRequireApproval(e.target.checked)}
-                  className="rounded text-amber-600 focus:ring-amber-500 h-4 w-4"
-                />
-                <div className="text-xs text-amber-900 dark:text-amber-300">
-                  <span className="font-bold">Bắt buộc Phê Duyệt bài đăng</span>
-                  <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                    Khi bật, bài viết từ Editor phải được Approver hoặc Manager duyệt trước khi phát sóng.
-                  </p>
-                </div>
-              </label>
 
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button

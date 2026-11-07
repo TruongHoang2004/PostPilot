@@ -2,12 +2,16 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/TruongHoang2004/PostPilot/internal/crypto"
 	"github.com/TruongHoang2004/PostPilot/internal/domain"
@@ -28,8 +32,20 @@ func (s *Server) handleFBOAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	front, frontErr := url.Parse(s.cfg.FrontendURL)
+	callback, callbackErr := url.Parse(s.cfg.FBRedirectURI)
+	if frontErr != nil || callbackErr != nil || front.Host == "" || callback.Host != front.Host || callback.Scheme != front.Scheme {
+		writeJSON(w, 400, map[string]any{"error": "FB_REDIRECT_URI must use the frontend origin and /api/v1/auth/facebook/callback so the browser can bind OAuth securely"})
+		return
+	}
+
 	tc := domain.TenantFromContext(r.Context())
 	state := crypto.SignOAuthState(tc.OrganizationID, tc.UserID, s.cfg.APIAdminKey)
+	if err := s.store.CreateOAuthState(r.Context(), oauthStateHash(state), time.Now().Add(10*time.Minute)); err != nil {
+		writeJSON(w, 503, map[string]any{"error": "cannot start secure OAuth session"})
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: oauthCookieName(s.cfg.FrontendURL), Value: state, Path: "/", MaxAge: 600, HttpOnly: true, Secure: front.Scheme == "https", SameSite: http.SameSiteLaxMode})
 	loginURL := s.fbClient.BuildOAuthLoginURL(s.cfg.FBAppID, s.cfg.FBRedirectURI, state)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"oauth_login_url": loginURL,
@@ -47,6 +63,13 @@ func (s *Server) handleFBOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	targetHost := s.cfg.FrontendURL
 	if targetHost == "" {
 		targetHost = "http://localhost:3000"
+	}
+
+	cookie, cookieErr := r.Cookie(oauthCookieName(s.cfg.FrontendURL))
+	http.SetCookie(w, &http.Cookie{Name: oauthCookieName(s.cfg.FrontendURL), Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: strings.HasPrefix(s.cfg.FrontendURL, "https://"), SameSite: http.SameSiteLaxMode})
+	if cookieErr != nil || state == "" || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(state)) != 1 {
+		http.Error(w, "OAuth browser session mismatch; reconnect from PostPilot", 403)
+		return
 	}
 
 	if s.fbClient == nil {
@@ -73,6 +96,12 @@ func (s *Server) handleFBOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx = domain.WithTenantContext(ctx, &domain.TenantContext{OrganizationID: orgID, UserID: userID})
+	if err := s.store.ConsumeOAuthState(ctx, oauthStateHash(state)); err != nil {
+		http.Error(w, "OAuth session expired or already used", 403)
+		return
+	}
+
 	user, userErr := s.store.GetUserByID(ctx, userID)
 	members, memberErr := s.store.ListOrganizationMembers(ctx, orgID)
 	allowed := false
@@ -91,7 +120,7 @@ func (s *Server) handleFBOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		ctx, s.cfg.FBAppID, s.cfg.FBAppSecret, s.cfg.FBRedirectURI, code,
 	)
 	if err != nil {
-		http.Redirect(w, r, targetHost+"/?oauth=error&message="+url.QueryEscape("exchange code failed: "+err.Error()), http.StatusTemporaryRedirect)
+		http.Redirect(w, r, targetHost+"/?oauth=error&message="+url.QueryEscape("Facebook token exchange failed; verify app configuration and reconnect"), http.StatusTemporaryRedirect)
 		return
 	}
 
@@ -146,21 +175,21 @@ func (s *Server) exchangeAndSaveFacebookChannels(ctx context.Context, shortUserT
 	if s.cfg.FBAppID != "" && s.cfg.FBAppSecret != "" && s.cfg.FBAppID != "your_facebook_app_id" {
 		exchanged, err := s.fbClient.ExchangeShortToLongLivedUserToken(ctx, s.cfg.FBAppID, s.cfg.FBAppSecret, shortUserToken)
 		if err != nil {
-			return nil, fmt.Errorf("exchange short-to-long-lived token: %w", err)
+			return nil, errors.New("Facebook token exchange failed; verify the app configuration and reconnect")
 		}
 		longUserToken = exchanged
 	}
 
 	managedPages, err := s.fbClient.FetchManagedPages(ctx, longUserToken)
 	if err != nil {
-		return nil, fmt.Errorf("fetch /me/accounts: %w", err)
+		return nil, errors.New("cannot load Facebook Pages; reconnect and verify Page permissions")
 	}
 
 	var savedChannels []*domain.Channel
 	for _, mp := range managedPages {
 		encToken, err := s.cipher.Encrypt(mp.AccessToken)
 		if err != nil {
-			continue
+			return savedChannels, fmt.Errorf("connected %d Pages; cannot encrypt credential for Page %s", len(savedChannels), mp.PageID)
 		}
 		saved, err := s.store.UpsertChannel(ctx, &domain.Channel{
 			OrganizationID:       orgID,
@@ -172,10 +201,11 @@ func (s *Server) exchangeAndSaveFacebookChannels(ctx context.Context, shortUserT
 			TokenStatus:          domain.TokenStatusActive,
 			IsActive:             true,
 		})
-		if err == nil {
-			saved.MaskedToken = crypto.MaskToken(mp.AccessToken)
-			savedChannels = append(savedChannels, saved)
+		if err != nil {
+			return savedChannels, fmt.Errorf("connected %d Pages; could not save Page %s; retry after storage is available", len(savedChannels), mp.PageID)
 		}
+		saved.MaskedToken = crypto.MaskToken(mp.AccessToken)
+		savedChannels = append(savedChannels, saved)
 	}
 	return savedChannels, nil
 }
@@ -197,4 +227,16 @@ func (s *Server) handleFBWebhookVerify(w http.ResponseWriter, r *http.Request) {
 // handleFBWebhookEvent receives webhook event payloads from Meta.
 func (s *Server) handleFBWebhookEvent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNotImplemented, map[string]any{"error": "webhook event processing is not available; scheduled publishing uses the worker"})
+}
+
+func oauthStateHash(state string) string {
+	sum := sha256.Sum256([]byte(state))
+	return hex.EncodeToString(sum[:])
+}
+
+func oauthCookieName(frontendURL string) string {
+	if strings.HasPrefix(frontendURL, "https://") {
+		return "__Host-postpilot-oauth-state"
+	}
+	return "postpilot_oauth_state"
 }

@@ -171,7 +171,7 @@ func DefaultTenantContext() *TenantContext {
 	}
 }
 
-// TenantFromContext extracts the TenantContext from ctx, or returns a default tenant context if none is present.
+// TenantFromContext returns the explicit tenant or an empty, unprivileged context.
 func TenantFromContext(ctx context.Context) *TenantContext {
 	if ctx != nil {
 		if tc, ok := ctx.Value(tenantCtxKey{}).(*TenantContext); ok && tc != nil {

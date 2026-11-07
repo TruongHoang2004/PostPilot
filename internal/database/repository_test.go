@@ -12,13 +12,13 @@ import (
 func TestTenantContextFallback(t *testing.T) {
 	// 1. Nil context fallback
 	tc1 := TenantFromContext(nil)
-	if tc1.OrganizationID != domain.DefaultOrganizationID || tc1.UserID != domain.DefaultUserID || tc1.OrgRole != domain.OrgRoleOwner {
+	if tc1.OrganizationID != "" || tc1.UserID != "" || tc1.IsOrgAdminOrOwner() {
 		t.Fatalf("expected default tenant context on nil context, got: %+v", tc1)
 	}
 
 	// 2. Background context without tenant context fallback
 	tc2 := TenantFromContext(context.Background())
-	if tc2.OrganizationID != domain.DefaultOrganizationID || tc2.UserID != domain.DefaultUserID || tc2.OrgRole != domain.OrgRoleOwner {
+	if tc2.OrganizationID != "" || tc2.UserID != "" || tc2.IsOrgAdminOrOwner() {
 		t.Fatalf("expected default tenant context on background context, got: %+v", tc2)
 	}
 
@@ -37,7 +37,7 @@ func TestTenantContextFallback(t *testing.T) {
 }
 
 func TestInMemoryStore_SeededDefaults(t *testing.T) {
-	ctx := context.Background()
+	ctx := domain.WithTenantContext(context.Background(), domain.DefaultTenantContext())
 	store := NewInMemoryStore()
 
 	// Default user exists
@@ -69,7 +69,7 @@ func TestInMemoryStore_SeededDefaults(t *testing.T) {
 }
 
 func TestInMemoryStore_Users(t *testing.T) {
-	ctx := context.Background()
+	ctx := domain.WithTenantContext(context.Background(), domain.DefaultTenantContext())
 	store := NewInMemoryStore()
 
 	// 1. CreateUser
@@ -118,7 +118,7 @@ func TestInMemoryStore_Users(t *testing.T) {
 }
 
 func TestInMemoryStore_OrganizationsAndMembers(t *testing.T) {
-	ctx := context.Background()
+	ctx := domain.WithTenantContext(context.Background(), domain.DefaultTenantContext())
 	store := NewInMemoryStore()
 
 	// 1. Create owner user
@@ -199,7 +199,7 @@ func TestInMemoryStore_OrganizationsAndMembers(t *testing.T) {
 }
 
 func TestInMemoryStore_Invitations(t *testing.T) {
-	ctx := context.Background()
+	ctx := domain.WithTenantContext(context.Background(), domain.DefaultTenantContext())
 	store := NewInMemoryStore()
 
 	inv := &domain.OrganizationInvitation{
@@ -257,10 +257,11 @@ func TestInMemoryStore_Invitations(t *testing.T) {
 }
 
 func TestInMemoryStore_ChannelGroupsAndPermissions(t *testing.T) {
-	ctx := context.Background()
+	ctx := domain.WithTenantContext(context.Background(), domain.DefaultTenantContext())
 	store := NewInMemoryStore()
 
 	orgID := "org-media-co"
+	ctx = domain.WithTenantContext(ctx, &domain.TenantContext{OrganizationID: orgID})
 	user, _ := store.CreateUser(ctx, &domain.User{
 		Email:    "manager@mediaco.com",
 		FullName: "Media Manager",
@@ -298,6 +299,7 @@ func TestInMemoryStore_ChannelGroupsAndPermissions(t *testing.T) {
 		t.Fatalf("set channel group channels failed: %v", err)
 	}
 
+	_, _ = store.AddOrganizationMember(ctx, &domain.OrganizationMember{OrganizationID: orgID, UserID: user.ID, OrgRole: domain.OrgRoleMember})
 	// 3. Set permission
 	perm, err := store.SetChannelGroupPermission(ctx, &domain.ChannelGroupPermission{
 		ChannelGroupID: group.ID,
@@ -349,7 +351,7 @@ func TestInMemoryStore_ChannelGroupsAndPermissions(t *testing.T) {
 }
 
 func TestInMemoryStore_PostWorkflowAndApprovals(t *testing.T) {
-	ctx := context.Background()
+	ctx := domain.WithTenantContext(context.Background(), domain.DefaultTenantContext())
 	store := NewInMemoryStore()
 
 	channel, _ := store.UpsertChannel(ctx, &domain.Channel{
@@ -498,61 +500,37 @@ func TestInMemoryStore_MultiTenantIsolation(t *testing.T) {
 func TestInMemoryStore_TenantFairScheduling(t *testing.T) {
 	store := NewInMemoryStore()
 	now := time.Now().UTC()
-
-	// Org 1 has 5 due posts
-	ctxOrg1 := WithTenantContext(context.Background(), &domain.TenantContext{
-		OrganizationID: "tenant-A",
-		UserID:         "user-a",
-	})
-	for i := 0; i < 5; i++ {
-		_, _ = store.CreatePost(ctxOrg1, &domain.Post{
-			ChannelID:   "ch-a",
-			Content:     "Post from Org A",
-			Status:      domain.PostStatusScheduled,
-			ScheduledAt: now.Add(time.Duration(-10+i) * time.Minute),
-		})
-	}
-
-	// Org 2 has 2 due posts
-	ctxOrg2 := WithTenantContext(context.Background(), &domain.TenantContext{
-		OrganizationID: "tenant-B",
-		UserID:         "user-b",
-	})
-	for i := 0; i < 2; i++ {
-		_, _ = store.CreatePost(ctxOrg2, &domain.Post{
-			ChannelID:   "ch-b",
-			Content:     "Post from Org B",
-			Status:      domain.PostStatusScheduled,
-			ScheduledAt: now.Add(time.Duration(-5+i) * time.Minute),
-		})
-	}
-
-	// Batch size of 4 must interleave fairly across tenants (A, B, A, B, etc.)
-	claimed, err := store.ClaimDuePosts(context.Background(), now, 4)
-	if err != nil {
-		t.Fatalf("claim due posts failed: %v", err)
-	}
-	if len(claimed) != 4 {
-		t.Fatalf("expected 4 claimed posts, got %d", len(claimed))
-	}
-
-	countA := 0
-	countB := 0
-	for _, p := range claimed {
-		if p.OrganizationID == "tenant-A" {
-			countA++
-		} else if p.OrganizationID == "tenant-B" {
-			countB++
+	for _, org := range []string{"tenant-A", "tenant-B"} {
+		ctx := WithTenantContext(t.Context(), &domain.TenantContext{OrganizationID: org})
+		ch, err := store.UpsertChannel(ctx, &domain.Channel{ExternalID: org, Name: org})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 3; i++ {
+			if _, err = store.CreatePost(ctx, &domain.Post{ChannelID: ch.ID, Status: domain.PostStatusScheduled, ScheduledAt: now}); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
-
-	if countA != 2 || countB != 2 {
-		t.Fatalf("fair scheduling failed: expected 2 from A and 2 from B, got A=%d, B=%d", countA, countB)
+	if _, err := store.ClaimDuePosts(t.Context(), now, 4); err == nil {
+		t.Fatal("claim without tenant must fail")
+	}
+	for _, org := range []string{"tenant-A", "tenant-B"} {
+		ctx := WithTenantContext(t.Context(), &domain.TenantContext{OrganizationID: org})
+		posts, err := store.ClaimDuePosts(ctx, now, 2)
+		if err != nil || len(posts) != 2 {
+			t.Fatalf("claim %s: %d %v", org, len(posts), err)
+		}
+		for _, p := range posts {
+			if p.OrganizationID != org {
+				t.Fatal("cross-tenant claim")
+			}
+		}
 	}
 }
 
 func TestInMemoryStore_AuditLogs(t *testing.T) {
-	ctx := context.Background()
+	ctx := domain.WithTenantContext(context.Background(), domain.DefaultTenantContext())
 	store := NewInMemoryStore()
 
 	orgID := "org-security-audit"
@@ -579,5 +557,74 @@ func TestInMemoryStore_AuditLogs(t *testing.T) {
 	}
 	if logs[0].OrganizationID != orgID || logs[0].Action != "CHANNEL_CREATED" {
 		t.Fatalf("unexpected audit log: %+v", logs[0])
+	}
+}
+
+func TestEntityMutationsRequireTheirOrganization(t *testing.T) {
+	store := NewInMemoryStore()
+	a := WithTenantContext(t.Context(), &domain.TenantContext{OrganizationID: "a"})
+	b := WithTenantContext(t.Context(), &domain.TenantContext{OrganizationID: "b"})
+	ch, err := store.UpsertChannel(a, &domain.Channel{ExternalID: "page", Name: "A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post, err := store.CreatePost(a, &domain.Post{ChannelID: ch.ID, Status: domain.PostStatusPendingApproval})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operations := []func() error{
+		func() error { return store.MarkPostProcessing(b, post.ID) },
+		func() error { return store.MarkPostPublished(b, post.ID, "external", time.Now()) },
+		func() error { return store.MarkPostFailedOrRetry(b, post.ID, 1, nil, domain.PostStatusFailed, 0, "x") },
+		func() error {
+			_, err := store.ReviewPost(b, post.ID, "reviewer", domain.ApprovalActionApproved, "")
+			return err
+		},
+		func() error { return store.UpdateChannelTokenStatus(b, ch.ID, domain.TokenStatusExpired, time.Now()) },
+		func() error { return store.UpdateChannelRateLimit(b, ch.ID, domain.RateLimitUsage{}) },
+		func() error { return store.MarkPostProcessing(t.Context(), post.ID) },
+	}
+	for i, op := range operations {
+		if err := op(); err == nil {
+			t.Fatalf("unauthorized mutation %d succeeded", i)
+		}
+	}
+	current, _ := store.GetPostByID(a, post.ID)
+	if current.Status != domain.PostStatusPendingApproval {
+		t.Fatal("foreign mutation changed post")
+	}
+}
+
+func TestMemoryCreatesRejectForeignIDCollisions(t *testing.T) {
+	s := NewInMemoryStore()
+	a := WithTenantContext(t.Context(), &domain.TenantContext{OrganizationID: "a"})
+	b := WithTenantContext(t.Context(), &domain.TenantContext{OrganizationID: "b"})
+	ca, _ := s.UpsertChannel(a, &domain.Channel{ExternalID: "a", Name: "a"})
+	cb, _ := s.UpsertChannel(b, &domain.Channel{ExternalID: "b", Name: "b"})
+	post, _ := s.CreatePost(a, &domain.Post{ChannelID: ca.ID})
+	group, _ := s.CreateChannelGroup(a, &domain.ChannelGroup{Name: "a"})
+	asset, _ := s.CreateMediaAsset(a, &domain.MediaAsset{FileName: "a"})
+	cases := []func() error{
+		func() error {
+			_, err := s.UpsertChannel(b, &domain.Channel{ID: ca.ID, ExternalID: "foreign", Name: "foreign"})
+			return err
+		},
+		func() error { _, err := s.CreatePost(b, &domain.Post{ID: post.ID, ChannelID: cb.ID}); return err },
+		func() error {
+			_, err := s.CreateChannelGroup(b, &domain.ChannelGroup{ID: group.ID, Name: "foreign"})
+			return err
+		},
+		func() error {
+			_, err := s.CreateMediaAsset(b, &domain.MediaAsset{ID: asset.ID, FileName: "foreign"})
+			return err
+		},
+	}
+	for i, create := range cases {
+		if err := create(); err == nil {
+			t.Fatalf("foreign ID collision %d overwrote entity", i)
+		}
+	}
+	if _, err := s.GetPostByID(a, post.ID); err != nil {
+		t.Fatal("original tenant lost post")
 	}
 }

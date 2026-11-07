@@ -18,7 +18,6 @@ import (
 	"github.com/TruongHoang2004/PostPilot/internal/infra/notifier"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/redis"
 	"github.com/TruongHoang2004/PostPilot/internal/infra/storage"
-	"github.com/TruongHoang2004/PostPilot/internal/platform/facebook"
 	"github.com/TruongHoang2004/PostPilot/internal/worker"
 )
 
@@ -29,7 +28,7 @@ func setupTestServer(t *testing.T) (*Server, http.Handler, database.Store) {
 	store := database.NewInMemoryStore()
 	redisClient := redis.NewInMemoryClient()
 	cipher, _ := crypto.NewTokenCipher(cfg.TokenEncryptionKey)
-	fbClient := facebook.NewClient(cfg.FBGraphBaseURL, cfg.FBGraphVersion)
+	fbClient := testFacebookClient(cfg.FBGraphBaseURL, cfg.FBGraphVersion)
 	s3 := storage.NewS3Service(cfg.S3Endpoint, cfg.S3PublicBaseURL, cfg.S3Region, cfg.S3Bucket, cfg.S3AccessKey, cfg.S3SecretKey)
 	aiGen := ai.NewGeminiGenerator("", cfg.GeminiModel)
 	notif := notifier.NewTelegramNotifier("", "", logger)
@@ -40,13 +39,13 @@ func setupTestServer(t *testing.T) (*Server, http.Handler, database.Store) {
 }
 
 func TestAuthAndOrgLifecycle(t *testing.T) {
-	_, handler, _ := setupTestServer(t)
+	srv, handler, _ := setupTestServer(t)
 
 	// 1. Register a new user
 	regPayload := `{"email":"alice@example.com","password":"SuperSecretPassword123","full_name":"Alice Wonderland"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewBufferString(regPayload))
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	serveTest(t, srv, handler, rec, req)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("expected register 201, got %d: %s", rec.Code, rec.Body.String())
@@ -78,7 +77,7 @@ func TestAuthAndOrgLifecycle(t *testing.T) {
 	loginPayload := `{"email":"alice@example.com","password":"SuperSecretPassword123"}`
 	reqLogin := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(loginPayload))
 	recLogin := httptest.NewRecorder()
-	handler.ServeHTTP(recLogin, reqLogin)
+	serveTest(t, srv, handler, recLogin, reqLogin)
 
 	if recLogin.Code != http.StatusOK {
 		t.Fatalf("expected login 200, got %d: %s", recLogin.Code, recLogin.Body.String())
@@ -95,7 +94,7 @@ func TestAuthAndOrgLifecycle(t *testing.T) {
 	reqMe := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
 	reqMe.Header.Set("Authorization", "Bearer "+loginToken)
 	recMe := httptest.NewRecorder()
-	handler.ServeHTTP(recMe, reqMe)
+	serveTest(t, srv, handler, recMe, reqMe)
 
 	if recMe.Code != http.StatusOK {
 		t.Fatalf("expected /auth/me 200, got %d: %s", recMe.Code, recMe.Body.String())
@@ -106,7 +105,7 @@ func TestAuthAndOrgLifecycle(t *testing.T) {
 	reqNewOrg := httptest.NewRequest(http.MethodPost, "/api/v1/organizations", bytes.NewBufferString(createOrgPayload))
 	reqNewOrg.Header.Set("Authorization", "Bearer "+loginToken)
 	recNewOrg := httptest.NewRecorder()
-	handler.ServeHTTP(recNewOrg, reqNewOrg)
+	serveTest(t, srv, handler, recNewOrg, reqNewOrg)
 
 	if recNewOrg.Code != http.StatusCreated {
 		t.Fatalf("expected create org 201, got %d: %s", recNewOrg.Code, recNewOrg.Body.String())
@@ -116,7 +115,7 @@ func TestAuthAndOrgLifecycle(t *testing.T) {
 	reqListOrgs := httptest.NewRequest(http.MethodGet, "/api/v1/organizations", nil)
 	reqListOrgs.Header.Set("Authorization", "Bearer "+loginToken)
 	recListOrgs := httptest.NewRecorder()
-	handler.ServeHTTP(recListOrgs, reqListOrgs)
+	serveTest(t, srv, handler, recListOrgs, reqListOrgs)
 
 	if recListOrgs.Code != http.StatusOK {
 		t.Fatalf("expected list orgs 200, got %d", recListOrgs.Code)
@@ -127,7 +126,7 @@ func TestAuthAndOrgLifecycle(t *testing.T) {
 	reqInvite := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/organizations/%s/members", orgID), bytes.NewBufferString(invitePayload))
 	reqInvite.Header.Set("Authorization", "Bearer "+loginToken)
 	recInvite := httptest.NewRecorder()
-	handler.ServeHTTP(recInvite, reqInvite)
+	serveTest(t, srv, handler, recInvite, reqInvite)
 
 	if recInvite.Code != http.StatusCreated {
 		t.Fatalf("expected invite member 201, got %d: %s", recInvite.Code, recInvite.Body.String())
@@ -140,12 +139,23 @@ func TestAuthAndOrgLifecycle(t *testing.T) {
 		t.Fatalf("expected invitation token")
 	}
 
+	// Recipient registers with the invited email and accepts using their own JWT.
+	regBob := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewBufferString(`{"email":"bob@example.com","password":"LongPasswordBob123","full_name":"Bob"}`))
+	recBob := httptest.NewRecorder()
+	handler.ServeHTTP(recBob, regBob)
+	if recBob.Code != 201 {
+		t.Fatalf("register Bob: %d %s", recBob.Code, recBob.Body.String())
+	}
+	var bobResponse map[string]any
+	_ = json.Unmarshal(recBob.Body.Bytes(), &bobResponse)
+	bobToken := bobResponse["token"].(string)
+
 	// 7. Accept invitation
 	acceptPayload := fmt.Sprintf(`{"token":"%s"}`, invToken)
 	reqAccept := httptest.NewRequest(http.MethodPost, "/api/v1/invitations/accept", bytes.NewBufferString(acceptPayload))
-	reqAccept.Header.Set("Authorization", "Bearer "+loginToken)
+	reqAccept.Header.Set("Authorization", "Bearer "+bobToken)
 	recAccept := httptest.NewRecorder()
-	handler.ServeHTTP(recAccept, reqAccept)
+	serveTest(t, srv, handler, recAccept, reqAccept)
 
 	if recAccept.Code != http.StatusOK {
 		t.Fatalf("expected accept invitation 200, got %d: %s", recAccept.Code, recAccept.Body.String())
@@ -155,7 +165,7 @@ func TestAuthAndOrgLifecycle(t *testing.T) {
 	reqListMembers := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/organizations/%s/members", orgID), nil)
 	reqListMembers.Header.Set("Authorization", "Bearer "+loginToken)
 	recListMembers := httptest.NewRecorder()
-	handler.ServeHTTP(recListMembers, reqListMembers)
+	serveTest(t, srv, handler, recListMembers, reqListMembers)
 
 	if recListMembers.Code != http.StatusOK {
 		t.Fatalf("expected list members 200, got %d: %s", recListMembers.Code, recListMembers.Body.String())
@@ -165,7 +175,7 @@ func TestAuthAndOrgLifecycle(t *testing.T) {
 	reqAudit := httptest.NewRequest(http.MethodGet, "/api/v1/audit-logs", nil)
 	reqAudit.Header.Set("Authorization", "Bearer "+loginToken)
 	recAudit := httptest.NewRecorder()
-	handler.ServeHTTP(recAudit, reqAudit)
+	serveTest(t, srv, handler, recAudit, reqAudit)
 
 	if recAudit.Code != http.StatusOK {
 		t.Fatalf("expected audit logs 200, got %d", recAudit.Code)
@@ -173,7 +183,7 @@ func TestAuthAndOrgLifecycle(t *testing.T) {
 }
 
 func TestChannelGroupAndRBAC(t *testing.T) {
-	_, handler, store := setupTestServer(t)
+	srv, handler, store := setupTestServer(t)
 
 	// Create test channel
 	ctx := domain.WithTenantContext(t.Context(), domain.DefaultTenantContext())
@@ -193,7 +203,7 @@ func TestChannelGroupAndRBAC(t *testing.T) {
 	groupPayload := `{"name":"Marketing Campaigns","description":"Social Media Team Group","require_approval":true}`
 	reqGroup := httptest.NewRequest(http.MethodPost, "/api/v1/channel-groups", bytes.NewBufferString(groupPayload))
 	recGroup := httptest.NewRecorder()
-	handler.ServeHTTP(recGroup, reqGroup)
+	serveTest(t, srv, handler, recGroup, reqGroup)
 
 	if recGroup.Code != http.StatusCreated {
 		t.Fatalf("expected create channel group 201, got %d: %s", recGroup.Code, recGroup.Body.String())
@@ -207,7 +217,7 @@ func TestChannelGroupAndRBAC(t *testing.T) {
 	setChPayload := fmt.Sprintf(`{"channel_ids":["%s"]}`, ch.ID)
 	reqSetCh := httptest.NewRequest(http.MethodPut, fmt.Sprintf("/api/v1/channel-groups/%s/channels", groupID), bytes.NewBufferString(setChPayload))
 	recSetCh := httptest.NewRecorder()
-	handler.ServeHTTP(recSetCh, reqSetCh)
+	serveTest(t, srv, handler, recSetCh, reqSetCh)
 
 	if recSetCh.Code != http.StatusOK {
 		t.Fatalf("expected set channels 200, got %d: %s", recSetCh.Code, recSetCh.Body.String())
@@ -216,17 +226,19 @@ func TestChannelGroupAndRBAC(t *testing.T) {
 	// 3. List Channel Groups
 	reqListGroups := httptest.NewRequest(http.MethodGet, "/api/v1/channel-groups", nil)
 	recListGroups := httptest.NewRecorder()
-	handler.ServeHTTP(recListGroups, reqListGroups)
+	serveTest(t, srv, handler, recListGroups, reqListGroups)
 
 	if recListGroups.Code != http.StatusOK {
 		t.Fatalf("expected list channel groups 200, got %d: %s", recListGroups.Code, recListGroups.Body.String())
 	}
 
-	// 4. Set Group Permission for Member
+	// 4. Set Group Permission for an actual member.
+	memberFixture, _ := store.CreateUser(ctx, &domain.User{ID: "00000000-0000-0000-0000-000000000002", Email: "member@postpilot.test", IsActive: true})
+	_, _ = store.AddOrganizationMember(ctx, &domain.OrganizationMember{OrganizationID: domain.DefaultOrganizationID, UserID: memberFixture.ID, OrgRole: domain.OrgRoleMember})
 	permPayload := `{"user_id":"00000000-0000-0000-0000-000000000002","role":"EDITOR"}`
 	reqPerm := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/channel-groups/%s/permissions", groupID), bytes.NewBufferString(permPayload))
 	recPerm := httptest.NewRecorder()
-	handler.ServeHTTP(recPerm, reqPerm)
+	serveTest(t, srv, handler, recPerm, reqPerm)
 
 	if recPerm.Code != http.StatusOK {
 		t.Fatalf("expected set group permission 200, got %d: %s", recPerm.Code, recPerm.Body.String())
@@ -235,7 +247,7 @@ func TestChannelGroupAndRBAC(t *testing.T) {
 	// 5. List Permissions
 	reqListPerms := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/channel-groups/%s/permissions", groupID), nil)
 	recListPerms := httptest.NewRecorder()
-	handler.ServeHTTP(recListPerms, reqListPerms)
+	serveTest(t, srv, handler, recListPerms, reqListPerms)
 
 	if recListPerms.Code != http.StatusOK {
 		t.Fatalf("expected list permissions 200, got %d: %s", recListPerms.Code, recListPerms.Body.String())
@@ -244,7 +256,7 @@ func TestChannelGroupAndRBAC(t *testing.T) {
 	// 6. Delete Permission
 	reqDelPerm := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/channel-groups/%s/permissions/%s", groupID, "00000000-0000-0000-0000-000000000002"), nil)
 	recDelPerm := httptest.NewRecorder()
-	handler.ServeHTTP(recDelPerm, reqDelPerm)
+	serveTest(t, srv, handler, recDelPerm, reqDelPerm)
 
 	if recDelPerm.Code != http.StatusOK {
 		t.Fatalf("expected delete permission 200, got %d: %s", recDelPerm.Code, recDelPerm.Body.String())
@@ -253,7 +265,7 @@ func TestChannelGroupAndRBAC(t *testing.T) {
 	// 7. Delete Channel Group
 	reqDelGroup := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/api/v1/channel-groups/%s", groupID), nil)
 	recDelGroup := httptest.NewRecorder()
-	handler.ServeHTTP(recDelGroup, reqDelGroup)
+	serveTest(t, srv, handler, recDelGroup, reqDelGroup)
 
 	if recDelGroup.Code != http.StatusOK {
 		t.Fatalf("expected delete channel group 200, got %d: %s", recDelGroup.Code, recDelGroup.Body.String())
@@ -261,7 +273,7 @@ func TestChannelGroupAndRBAC(t *testing.T) {
 }
 
 func TestPostPublishingApprovalAndWorkflow(t *testing.T) {
-	_, handler, store := setupTestServer(t)
+	srv, handler, store := setupTestServer(t)
 
 	// Create channel and channel group with approval required
 	ctx := domain.WithTenantContext(t.Context(), domain.DefaultTenantContext())
@@ -292,9 +304,9 @@ func TestPostPublishingApprovalAndWorkflow(t *testing.T) {
 	// Case 1: Role = VIEWER -> Rejected with 403 Forbidden
 	viewerPostPayload := fmt.Sprintf(`{"channel_id":"%s","content":"Hello Viewer"}`, ch.ID)
 	reqViewer := httptest.NewRequest(http.MethodPost, "/api/v1/posts", bytes.NewBufferString(viewerPostPayload))
-	reqViewer.Header.Set("X-Simulate-Role", "VIEWER")
+	authenticateTestRole(t, srv, reqViewer, "VIEWER", "")
 	recViewer := httptest.NewRecorder()
-	handler.ServeHTTP(recViewer, reqViewer)
+	serveTest(t, srv, handler, recViewer, reqViewer)
 
 	if recViewer.Code != http.StatusForbidden {
 		t.Fatalf("expected VIEWER post to return 403 Forbidden, got %d: %s", recViewer.Code, recViewer.Body.String())
@@ -303,9 +315,9 @@ func TestPostPublishingApprovalAndWorkflow(t *testing.T) {
 	// Case 2: Role = EDITOR attempting publish_now on approval-required channel -> 403 Forbidden
 	editorDirectPayload := fmt.Sprintf(`{"channel_id":"%s","content":"Hello Editor Direct","publish_now":true}`, ch.ID)
 	reqEditorDirect := httptest.NewRequest(http.MethodPost, "/api/v1/posts", bytes.NewBufferString(editorDirectPayload))
-	reqEditorDirect.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqEditorDirect, "EDITOR", "")
 	recEditorDirect := httptest.NewRecorder()
-	handler.ServeHTTP(recEditorDirect, reqEditorDirect)
+	serveTest(t, srv, handler, recEditorDirect, reqEditorDirect)
 
 	if recEditorDirect.Code != http.StatusForbidden {
 		t.Fatalf("expected EDITOR publish_now to return 403, got %d: %s", recEditorDirect.Code, recEditorDirect.Body.String())
@@ -314,9 +326,9 @@ func TestPostPublishingApprovalAndWorkflow(t *testing.T) {
 	// Case 3: Role = EDITOR authoring post on approval-required channel -> Forced PENDING_APPROVAL
 	editorPostPayload := fmt.Sprintf(`{"channel_id":"%s","content":"Editor Draft For Approval"}`, ch.ID)
 	reqEditor := httptest.NewRequest(http.MethodPost, "/api/v1/posts", bytes.NewBufferString(editorPostPayload))
-	reqEditor.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqEditor, "EDITOR", "")
 	recEditor := httptest.NewRecorder()
-	handler.ServeHTTP(recEditor, reqEditor)
+	serveTest(t, srv, handler, recEditor, reqEditor)
 
 	if recEditor.Code != http.StatusCreated {
 		t.Fatalf("expected EDITOR post to be created 201, got %d: %s", recEditor.Code, recEditor.Body.String())
@@ -331,9 +343,9 @@ func TestPostPublishingApprovalAndWorkflow(t *testing.T) {
 	// Case 4: EDITOR attempting to review post -> 403 Forbidden
 	reviewPayload := `{"action":"APPROVED","note":"Approved by myself"}`
 	reqReviewForbidden := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/posts/%s/review", createdPost.ID), bytes.NewBufferString(reviewPayload))
-	reqReviewForbidden.Header.Set("X-Simulate-Role", "EDITOR")
+	authenticateTestRole(t, srv, reqReviewForbidden, "EDITOR", "")
 	recReviewForbidden := httptest.NewRecorder()
-	handler.ServeHTTP(recReviewForbidden, reqReviewForbidden)
+	serveTest(t, srv, handler, recReviewForbidden, reqReviewForbidden)
 
 	if recReviewForbidden.Code != http.StatusForbidden {
 		t.Fatalf("expected review by EDITOR to return 403 Forbidden, got %d: %s", recReviewForbidden.Code, recReviewForbidden.Body.String())
@@ -341,9 +353,9 @@ func TestPostPublishingApprovalAndWorkflow(t *testing.T) {
 
 	// Case 5: APPROVER approving the post -> Status becomes SCHEDULED or QUEUED
 	reqReviewSuccess := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/posts/%s/review", createdPost.ID), bytes.NewBufferString(reviewPayload))
-	reqReviewSuccess.Header.Set("X-Simulate-Role", "APPROVER")
+	authenticateTestRole(t, srv, reqReviewSuccess, "APPROVER", "")
 	recReviewSuccess := httptest.NewRecorder()
-	handler.ServeHTTP(recReviewSuccess, reqReviewSuccess)
+	serveTest(t, srv, handler, recReviewSuccess, reqReviewSuccess)
 
 	if recReviewSuccess.Code != http.StatusOK {
 		t.Fatalf("expected review by APPROVER to return 200 OK, got %d: %s", recReviewSuccess.Code, recReviewSuccess.Body.String())
@@ -370,7 +382,7 @@ func TestPostPublishingApprovalAndWorkflow(t *testing.T) {
 	resubmitPayload := `{"content":"Updated content for approval"}`
 	reqResubmit := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/posts/%s/submit-approval", rejectedPost.ID), bytes.NewBufferString(resubmitPayload))
 	recResubmit := httptest.NewRecorder()
-	handler.ServeHTTP(recResubmit, reqResubmit)
+	serveTest(t, srv, handler, recResubmit, reqResubmit)
 
 	if recResubmit.Code != http.StatusOK {
 		t.Fatalf("expected submit approval 200 OK, got %d: %s", recResubmit.Code, recResubmit.Body.String())
@@ -387,7 +399,7 @@ func TestPostPublishingApprovalAndWorkflow(t *testing.T) {
 	fanoutPayload := fmt.Sprintf(`{"channel_group_id":"%s","content":"Fanout Announcement"}`, cg.ID)
 	reqFanout := httptest.NewRequest(http.MethodPost, "/api/v1/posts", bytes.NewBufferString(fanoutPayload))
 	recFanout := httptest.NewRecorder()
-	handler.ServeHTTP(recFanout, reqFanout)
+	serveTest(t, srv, handler, recFanout, reqFanout)
 
 	if recFanout.Code != http.StatusCreated {
 		t.Fatalf("expected fanout post creation 201, got %d: %s", recFanout.Code, recFanout.Body.String())
@@ -418,7 +430,7 @@ func TestTenantContextMiddlewareValidation(t *testing.T) {
 	recFallback := httptest.NewRecorder()
 	handler.ServeHTTP(recFallback, reqFallback)
 
-	if recFallback.Code != http.StatusOK {
-		t.Fatalf("expected 200 for unauthenticated fallback request, got %d: %s", recFallback.Code, recFallback.Body.String())
+	if recFallback.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unauthenticated request, got %d: %s", recFallback.Code, recFallback.Body.String())
 	}
 }

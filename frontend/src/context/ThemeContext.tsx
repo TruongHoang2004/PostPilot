@@ -13,17 +13,13 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("dark");
+  const [theme, setThemeState] = useState<Theme>("light");
 
   useEffect(() => {
     try {
-      const isHtmlLight = document.documentElement.classList.contains("light");
+      const isHtmlDark = document.documentElement.classList.contains("dark");
       const savedTheme = localStorage.getItem("postpilot-theme") as Theme | null;
-      if (savedTheme === "light" || isHtmlLight) {
-        setThemeState("light");
-      } else {
-        setThemeState("dark");
-      }
+      setThemeState(savedTheme === "dark" || (savedTheme !== "light" && isHtmlDark) ? "dark" : "light");
     } catch {
       // fallback
     }

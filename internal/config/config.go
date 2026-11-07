@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -145,4 +146,21 @@ func getEnvInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// ValidateRuntime rejects published development credentials before starting a service.
+func (c *Config) ValidateRuntime() error {
+	if len(c.APIAdminKey) < 32 || c.APIAdminKey == "dev-admin-secret-key-change-me" {
+		return fmt.Errorf("API_ADMIN_KEY must be a private random secret of at least 32 characters")
+	}
+	return c.ValidateWorkerRuntime()
+}
+func (c *Config) ValidateWorkerRuntime() error {
+	if c.TokenEncryptionKey == "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
+		return fmt.Errorf("set a private TOKEN_ENCRYPTION_KEY before starting")
+	}
+	if c.SchedulerInterval <= 0 || c.TokenCheckInterval <= 0 || c.FastWorkerConcurrency < 1 || c.HeavyWorkerConcurrency < 1 {
+		return fmt.Errorf("invalid worker intervals or concurrency")
+	}
+	return nil
 }

@@ -134,7 +134,7 @@ export function PageManager({ channels, loading, onRefresh }: PageManagerProps) 
       const res = await api.exchangeUserToken(userToken.trim());
       setUserToken("");
       setExchangeResult(
-        `🎉 Thành công! Đã tự động đổi và đồng bộ ${res.imported_count} Fanpage với Permanent Token không bao giờ hết hạn.`
+        `🎉 Thành công! Đã tự động đổi và đồng bộ ${res.imported_count} Fanpage với Permanent Token Page dài hạn.`
       );
       onRefresh();
       toast("🎉 Đã đổi và lưu Token vĩnh viễn thành công!", "success");
@@ -341,7 +341,7 @@ export function PageManager({ channels, loading, onRefresh }: PageManagerProps) 
                         <div className="flex items-center justify-between">
                           <span className="text-slate-500">AES Vault Token:</span>
                           <code className="font-mono text-slate-600 dark:text-slate-400 text-[11px]">
-                            {ch.masked_token || "EAABsb...OKEN"}
+                            {ch.masked_token || "Chưa xác minh token"}
                           </code>
                         </div>
                       </div>
@@ -508,7 +508,7 @@ export function PageManager({ channels, loading, onRefresh }: PageManagerProps) 
             <div>
               <h3 className="text-base font-bold text-slate-900 dark:text-white">Đổi Sang Permanent Page Access Token</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Tự động lấy tất cả các Fanpage bạn đang quản lý kèm Token không bao giờ hết hạn
+                Tự động lấy tất cả các Fanpage bạn đang quản lý kèm Token Page dài hạn
               </p>
             </div>
           </div>
@@ -607,7 +607,7 @@ export function PageManager({ channels, loading, onRefresh }: PageManagerProps) 
                     <span className="text-slate-500">Hạn sử dụng:</span>
                     <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
                       {verifyModalData.debug_info.expires_at === 0
-                        ? "Vĩnh Viễn (Never Expires)"
+                        ? "Không có ngày hết hạn; vẫn có thể bị thu hồi"
                         : verifyModalData.debug_info.expires_at
                         ? new Date(verifyModalData.debug_info.expires_at * 1000).toLocaleString("vi-VN")
                         : "Không xác định"}

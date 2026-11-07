@@ -27,9 +27,9 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Email = strings.TrimSpace(req.Email)
-	if req.Email == "" || req.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "email and password are required"})
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	if req.Email == "" || !strings.Contains(req.Email, "@") || len(req.Password) < 12 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "valid email and password of at least 12 characters are required"})
 		return
 	}
 
@@ -46,26 +46,19 @@ func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
 		IsActive:     true,
 	}
 
-	createdUser, err := s.store.CreateUser(ctx, userEntity)
-	if err != nil {
-		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error()})
+	if existing, _ := s.store.GetUserByEmail(ctx, req.Email); existing != nil {
+		writeJSON(w, 409, map[string]any{"error": "email already registered"})
 		return
 	}
-
-	orgName := req.FullName
-	if strings.TrimSpace(orgName) == "" {
+	orgName := strings.TrimSpace(req.FullName)
+	if orgName == "" {
 		orgName = "My Workspace"
 	} else {
-		orgName = strings.TrimSpace(orgName) + "'s Team"
+		orgName += "'s Team"
 	}
-	orgSlug := generateSlug(orgName)
-
-	createdOrg, err := s.store.CreateOrganization(ctx, &domain.Organization{
-		Name: orgName,
-		Slug: orgSlug,
-	}, createdUser.ID)
+	createdUser, createdOrg, err := s.store.RegisterAccount(ctx, userEntity, orgName)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "failed to create organization: " + err.Error()})
+		writeJSON(w, 503, map[string]any{"error": "cannot provision account and workspace; please retry"})
 		return
 	}
 
@@ -103,7 +96,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.store.GetUserByEmail(ctx, req.Email)
+	user, err := s.store.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(req.Email)))
 	if err != nil || user == nil || !user.IsActive {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid email or password"})
 		return
@@ -120,7 +113,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	primaryOrgID := domain.DefaultOrganizationID
+	primaryOrgID := ""
 	primaryRole := domain.OrgRoleMember
 	if len(orgs) > 0 {
 		primaryOrgID = orgs[0].ID
@@ -131,6 +124,11 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
+	}
+
+	if primaryOrgID == "" {
+		writeJSON(w, 403, map[string]any{"error": "account has no workspace; contact administrator"})
+		return
 	}
 
 	claims := crypto.JWTClaims{
@@ -306,7 +304,7 @@ func (s *Server) handleAddOrganizationMember(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	req.Email = strings.TrimSpace(req.Email)
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Email == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "email is required"})
 		return
@@ -316,7 +314,7 @@ func (s *Server) handleAddOrganizationMember(w http.ResponseWriter, r *http.Requ
 		role = domain.OrgRoleMember
 	}
 
-	existingUser, err := s.store.GetUserByEmail(ctx, req.Email)
+	existingUser, err := s.store.GetUserByEmail(ctx, strings.ToLower(strings.TrimSpace(req.Email)))
 	if err == nil && existingUser != nil {
 		member, err := s.store.AddOrganizationMember(ctx, &domain.OrganizationMember{
 			OrganizationID: orgID,
@@ -392,6 +390,12 @@ func (s *Server) handleAcceptInvitation(w http.ResponseWriter, r *http.Request) 
 	req.Token = strings.TrimSpace(req.Token)
 	if req.Token == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "token is required"})
+		return
+	}
+
+	invitation, err := s.store.GetInvitationByToken(ctx, req.Token)
+	if err != nil || invitation == nil || !strings.EqualFold(invitation.Email, tc.UserEmail) {
+		writeJSON(w, 403, map[string]any{"error": "invitation is invalid or belongs to a different email address"})
 		return
 	}
 

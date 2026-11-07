@@ -27,6 +27,10 @@ import (
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	cfg := config.Load()
+	if err := cfg.ValidateRuntime(); err != nil {
+		logger.Error("Invalid runtime configuration", "error", err)
+		os.Exit(1)
+	}
 
 	cipher, err := crypto.NewTokenCipher(cfg.TokenEncryptionKey)
 	if err != nil {

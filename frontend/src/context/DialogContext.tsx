@@ -1,5 +1,6 @@
 "use client";
 
+import { Modal } from "@/components/Modal";
 import React, { createContext, useContext, useState, useCallback, useRef } from "react";
 import { AlertTriangle, AlertCircle, CheckCircle2, Info, X } from "lucide-react";
 
@@ -136,18 +137,8 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const getConfirmButtonClasses = (variant: DialogVariant) => {
-    switch (variant) {
-      case "danger":
-        return "bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white shadow-lg shadow-red-600/30 border border-red-500/40";
-      case "warning":
-        return "bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white shadow-lg shadow-amber-600/30 border border-amber-500/40";
-      case "success":
-        return "bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/30 border border-emerald-500/40";
-      default:
-        return "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-600/30 border border-blue-500/40";
-    }
-  };
+  const getConfirmButtonClasses = (variant: DialogVariant) => variant === "danger"
+    ? "bg-red-700 hover:bg-red-800 text-white" : "bg-blue-600 hover:bg-blue-700 text-white";
 
   return (
     <DialogContext.Provider value={{ confirm, alert, toast }}>
@@ -155,31 +146,15 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
 
       {/* Modern Confirm / Alert Box Modal */}
       {dialogState.isOpen && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-in fade-in duration-200"
-          onClick={() => handleClose(false)}
-        >
+        <Modal labelledBy="confirmation-heading" onClose={() => handleClose(false)}>
           <div
-            className="relative w-full max-w-md bg-white dark:bg-[#111827] border border-slate-200 dark:border-slate-700/80 rounded-2xl shadow-2xl p-6 text-slate-800 dark:text-slate-100 overflow-hidden transform transition-all scale-100 animate-in zoom-in-95 duration-200"
+            className="dispatch-panel w-full max-w-md p-6 overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Ambient background glow */}
-            <div
-              className={`absolute -top-24 -left-24 w-48 h-48 rounded-full blur-3xl pointer-events-none opacity-20 ${
-                dialogState.variant === "danger"
-                  ? "bg-red-500"
-                  : dialogState.variant === "warning"
-                  ? "bg-amber-500"
-                  : dialogState.variant === "success"
-                  ? "bg-emerald-500"
-                  : "bg-blue-500"
-              }`}
-            />
-
             <div className="relative flex items-start gap-4">
               {renderIcon(dialogState.variant)}
               <div className="flex-1 min-w-0 pt-0.5">
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight mb-1">
+                <h3 id="confirmation-heading" className="text-lg font-bold text-slate-900 dark:text-white tracking-tight mb-1">
                   {dialogState.title}
                 </h3>
                 <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line">
@@ -211,15 +186,16 @@ export function DialogProvider({ children }: { children: React.ReactNode }) {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* Floating Toast Notifications */}
       {toasts.length > 0 && (
-        <div className="fixed bottom-6 right-6 z-[110] flex flex-col gap-2 pointer-events-none max-w-sm w-full">
+        <div className="fixed bottom-4 right-4 left-4 sm:left-auto z-[110] flex flex-col gap-2 pointer-events-none sm:max-w-sm">
           {toasts.map((t) => (
             <div
               key={t.id}
+              role="status"
               className={`pointer-events-auto flex items-center gap-3 p-4 rounded-xl border backdrop-blur-lg shadow-2xl animate-in slide-in-from-bottom-5 duration-200 ${
                 t.variant === "success"
                   ? "bg-emerald-50 dark:bg-emerald-950/90 border-emerald-200 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-200"

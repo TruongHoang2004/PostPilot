@@ -6,7 +6,9 @@
     "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:session": "node scripts/test-session.cjs",
+    "test:schedule": "node scripts/test-schedule.cjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

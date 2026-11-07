@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/TruongHoang2004/PostPilot/internal/app/publishing"
 	"github.com/TruongHoang2004/PostPilot/internal/config"
 	"github.com/TruongHoang2004/PostPilot/internal/crypto"
 	"github.com/TruongHoang2004/PostPilot/internal/database"
@@ -33,6 +34,8 @@ type Server struct {
 	notifier  *notifier.TelegramNotifier
 	processor *worker.Processor
 	logger    *slog.Logger
+
+	publishing *publishing.Service
 }
 
 func NewServer(
@@ -51,7 +54,7 @@ func NewServer(
 	if fbClient != nil {
 		reg.Register(facebook.NewPublisherAdapter(fbClient))
 	}
-	return &Server{
+	s := &Server{
 		cfg:       cfg,
 		store:     store,
 		redis:     redisClient,
@@ -64,6 +67,8 @@ func NewServer(
 		processor: proc,
 		logger:    logger,
 	}
+	s.publishing = publishing.NewService(store, redisClient, s, logger)
+	return s
 }
 
 // WithPublisherRegistry allows injecting a custom multi-platform adapter registry into the API Server.
@@ -108,7 +113,11 @@ func (s *Server) Handler() http.Handler {
 	// 4. Post & Publishing Core Domain Module (publishing_handler.go)
 	mux.HandleFunc("GET /api/v1/posts", s.handleListPosts)
 	mux.HandleFunc("POST /api/v1/posts", s.handleCreatePost)
+	mux.HandleFunc("POST /api/v1/posts/bulk", s.handleBulkCreatePosts)
+	mux.HandleFunc("POST /api/v1/posts/bulk/preview", s.handleBulkPreviewPosts)
+	mux.HandleFunc("GET /api/v1/posts/batches/{id}", s.handleGetPostBatch)
 	mux.HandleFunc("GET /api/v1/posts/{id}", s.handleGetPostDetail)
+	mux.HandleFunc("PATCH /api/v1/posts/{id}", s.handleUpdatePost)
 	mux.HandleFunc("POST /api/v1/posts/{id}/publish-now", s.handlePublishPostNow)
 	mux.HandleFunc("POST /api/v1/posts/{id}/cancel", s.handleCancelPost)
 	mux.HandleFunc("POST /api/v1/posts/{id}/submit-approval", s.handlePostSubmitApproval)
@@ -143,7 +152,7 @@ func (s *Server) withMiddlewares(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Key, X-Organization-Id")
 
 		if r.Method == http.MethodOptions {

@@ -5,8 +5,8 @@ import { ThemeProvider } from "@/context/ThemeContext";
 import { OrgProvider } from "@/context/OrgContext";
 
 export const metadata: Metadata = {
-  title: "PostPilot - Facebook Multi-Page Automation & Studio",
-  description: "Bảng điều khiển đăng bài tự động đa Fanpage Facebook với Golang Backend, Redis Queue và AI Gemini",
+  title: "PostPilot — Lịch đăng & Nội dung",
+  description: "Quản lý nội dung, phê duyệt và lên lịch đăng bài Facebook trong cùng một không gian làm việc.",
   icons: {
     icon: "/logo.svg",
     apple: "/logo.svg",
@@ -27,17 +27,14 @@ export default function RootLayout({
               (function() {
                 try {
                   var saved = localStorage.getItem('postpilot-theme');
-                  var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
                   if (saved === 'light') {
                     document.documentElement.classList.remove('dark');
                     document.documentElement.classList.add('light');
                   } else if (saved === 'dark') {
                     document.documentElement.classList.add('dark');
                     document.documentElement.classList.remove('light');
-                  } else if (prefersDark) {
-                    document.documentElement.classList.add('dark');
                   } else {
-                    document.documentElement.classList.add('dark');
+                    document.documentElement.classList.add('light');
                   }
                 } catch (e) {}
               })();

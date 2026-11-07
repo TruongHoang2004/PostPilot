@@ -248,7 +248,7 @@ func TestPostApprovalWorkflowMethods(t *testing.T) {
 		Content:   "Default org test",
 	}
 	newPost.PrepareForCreation(false, now)
-	if newPost.OrganizationID != DefaultOrganizationID {
-		t.Fatalf("expected DefaultOrganizationID, got: %s", newPost.OrganizationID)
+	if newPost.OrganizationID != "" {
+		t.Fatalf("expected tenant to remain unset until assigned by application, got: %s", newPost.OrganizationID)
 	}
 }

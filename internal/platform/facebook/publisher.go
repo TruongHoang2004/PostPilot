@@ -5,80 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
-
-func isLocalOrInternalURL(u string) bool {
-	lower := strings.ToLower(u)
-	return strings.Contains(lower, "localhost") ||
-		strings.Contains(lower, "127.0.0.1") ||
-		strings.Contains(lower, "minio:") ||
-		strings.Contains(lower, "api:") ||
-		strings.Contains(lower, "/uploads/")
-}
-
-// resolveLocalMediaBytes checks if mediaURL points to a local file in ./uploads/ or internal containers.
-// If so, it reads the binary data directly to upload to Meta Graph API (Chunked/Multipart)
-// instead of sending localhost URLs which Meta's external servers cannot reach.
-func resolveLocalMediaBytes(mediaURL string) ([]byte, string) {
-	fileName := filepath.Base(mediaURL)
-	if qIdx := strings.Index(fileName, "?"); qIdx != -1 {
-		fileName = fileName[:qIdx]
-	}
-	if fileName == "" || fileName == "." || fileName == "/" {
-		fileName = "media.mp4"
-	}
-
-	// 1. Read directly from local disk ./uploads/<fileName> if available
-	if idx := strings.Index(mediaURL, "/uploads/"); idx != -1 {
-		relName := mediaURL[idx+len("/uploads/"):]
-		if qIdx := strings.Index(relName, "?"); qIdx != -1 {
-			relName = relName[:qIdx]
-		}
-		baseName := filepath.Base(relName)
-		localPath := filepath.Join("./uploads", baseName)
-		if data, err := os.ReadFile(localPath); err == nil && len(data) > 0 {
-			return data, baseName
-		}
-	}
-
-	// 2. If it is an internal container URL (localhost / 127.0.0.1 / minio / api), download via internal HTTP
-	if isLocalOrInternalURL(mediaURL) && (strings.HasPrefix(mediaURL, "http://") || strings.HasPrefix(mediaURL, "https://")) {
-		candidates := []string{mediaURL}
-		if strings.Contains(mediaURL, "localhost:8080") || strings.Contains(mediaURL, "127.0.0.1:8080") {
-			r1 := strings.ReplaceAll(strings.ReplaceAll(mediaURL, "localhost:8080", "api:8080"), "127.0.0.1:8080", "api:8080")
-			candidates = append([]string{r1}, candidates...)
-		}
-		if strings.Contains(mediaURL, "localhost:9000") || strings.Contains(mediaURL, "127.0.0.1:9000") {
-			r2 := strings.ReplaceAll(strings.ReplaceAll(mediaURL, "localhost:9000", "minio:9000"), "127.0.0.1:9000", "minio:9000")
-			candidates = append([]string{r2}, candidates...)
-		}
-		hc := &http.Client{Timeout: 60 * time.Second}
-		for _, cand := range candidates {
-			resp, err := hc.Get(cand)
-			if err == nil && resp.StatusCode == http.StatusOK {
-				data, readErr := io.ReadAll(resp.Body)
-				_ = resp.Body.Close()
-				if readErr == nil && len(data) > 0 {
-					return data, fileName
-				}
-			} else if resp != nil {
-				_ = resp.Body.Close()
-			}
-		}
-	}
-
-	return nil, ""
-}
 
 // PublishOutcome contains the execution results of publishing to a Facebook Page.
 type PublishOutcome struct {
@@ -101,56 +34,30 @@ type StepExecutionLog struct {
 // - ALBUM        -> Upload individual photos `published=false` + POST /{page_id}/feed `attached_media`
 // - VIDEO        -> POST /{page_id}/videos (uses Chunked Binary Upload if local file)
 // - REEL         -> 3-phase flow for Facebook Reels (`/{page_id}/video_reels`)
-func (c *Client) PublishPost(ctx context.Context, fbPageID, pageAccessToken string, post *domain.Post) (*PublishOutcome, error) {
+func (c *Client) PublishPost(ctx context.Context, pageID, token string, post *domain.Post) (*PublishOutcome, error) {
+	if post.MediaType == domain.MediaTypeNone || post.MediaType == domain.MediaTypeLink {
+		return c.PublishTextOrLink(ctx, pageID, token, post.Content, post.LinkURL)
+	}
+	if len(post.MediaURLs) == 0 {
+		return nil, errors.New("media URL is required")
+	}
+	for _, raw := range post.MediaURLs {
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
+			return nil, errors.New("media must use a public HTTPS URL; re-upload legacy local media")
+		}
+	}
 	switch post.MediaType {
-	case domain.MediaTypeNone, domain.MediaTypeLink:
-		return c.PublishTextOrLink(ctx, fbPageID, pageAccessToken, post.Content, post.LinkURL)
 	case domain.MediaTypeImage:
-		if len(post.MediaURLs) == 0 {
-			return nil, errors.New("IMAGE post requires at least 1 url in media_urls")
-		}
-		if imgBytes, fileName := resolveLocalMediaBytes(post.MediaURLs[0]); len(imgBytes) > 0 {
-			return c.PublishSinglePhotoBytes(ctx, fbPageID, pageAccessToken, post.Content, fileName, imgBytes)
-		}
-		if isLocalOrInternalURL(post.MediaURLs[0]) {
-			return nil, fmt.Errorf("local image file not found (%s); please re-upload from UI", post.MediaURLs[0])
-		}
-		return c.PublishSinglePhoto(ctx, fbPageID, pageAccessToken, post.Content, post.MediaURLs[0])
+		return c.PublishSinglePhoto(ctx, pageID, token, post.Content, post.MediaURLs[0])
 	case domain.MediaTypeAlbum:
-		if len(post.MediaURLs) == 0 {
-			return nil, errors.New("ALBUM post requires media_urls")
-		}
-		if len(post.MediaURLs) == 1 {
-			if imgBytes, fileName := resolveLocalMediaBytes(post.MediaURLs[0]); len(imgBytes) > 0 {
-				return c.PublishSinglePhotoBytes(ctx, fbPageID, pageAccessToken, post.Content, fileName, imgBytes)
-			}
-			return c.PublishSinglePhoto(ctx, fbPageID, pageAccessToken, post.Content, post.MediaURLs[0])
-		}
-		return c.PublishPhotoAlbum(ctx, fbPageID, pageAccessToken, post.Content, post.MediaURLs)
+		return c.PublishPhotoAlbum(ctx, pageID, token, post.Content, post.MediaURLs)
 	case domain.MediaTypeVideo:
-		if len(post.MediaURLs) == 0 {
-			return nil, errors.New("VIDEO post requires video url in media_urls")
-		}
-		if videoBytes, _ := resolveLocalMediaBytes(post.MediaURLs[0]); len(videoBytes) > 0 {
-			return c.PublishVideoChunked(ctx, fbPageID, pageAccessToken, post.Content, videoBytes, 4*1024*1024)
-		}
-		if isLocalOrInternalURL(post.MediaURLs[0]) {
-			return nil, fmt.Errorf("local video file not found (%s); please re-upload from computer", post.MediaURLs[0])
-		}
-		return c.PublishVideoByURL(ctx, fbPageID, pageAccessToken, post.Content, post.MediaURLs[0])
+		return c.PublishVideoByURL(ctx, pageID, token, post.Content, post.MediaURLs[0])
 	case domain.MediaTypeReel:
-		if len(post.MediaURLs) == 0 {
-			return nil, errors.New("REEL post requires video url in media_urls")
-		}
-		if videoBytes, _ := resolveLocalMediaBytes(post.MediaURLs[0]); len(videoBytes) > 0 {
-			return c.PublishVideoChunked(ctx, fbPageID, pageAccessToken, post.Content, videoBytes, 4*1024*1024)
-		}
-		if isLocalOrInternalURL(post.MediaURLs[0]) {
-			return nil, fmt.Errorf("local video file not found (%s); please re-upload from computer", post.MediaURLs[0])
-		}
-		return c.PublishReelByURL(ctx, fbPageID, pageAccessToken, post.Content, post.MediaURLs[0])
+		return c.PublishReelByURL(ctx, pageID, token, post.Content, post.MediaURLs[0])
 	default:
-		return nil, fmt.Errorf("unsupported media_type: %s", post.MediaType)
+		return nil, fmt.Errorf("unsupported media type: %s", post.MediaType)
 	}
 }
 
@@ -255,19 +162,12 @@ func (c *Client) PublishPhotoAlbum(ctx context.Context, pageID, token, message s
 		var metrics CallMetrics
 		var err error
 
-		if imgBytes, fileName := resolveLocalMediaBytes(imgURL); len(imgBytes) > 0 {
-			fields := map[string]string{
-				"published":    "false",
-				"access_token": token,
-			}
-			res, metrics, err = c.PostMultipartChunk(ctx, photoPath, fields, "source", fileName, imgBytes)
-		} else {
-			form := url.Values{}
-			form.Set("url", imgURL)
-			form.Set("published", "false")
-			form.Set("access_token", token)
-			res, metrics, err = c.PostForm(ctx, photoPath, form)
-		}
+		form := url.Values{}
+		form.Set("url", imgURL)
+		form.Set("published", "false")
+		form.Set("access_token", token)
+		res, metrics, err = c.PostForm(ctx, photoPath, form)
+
 		outcome.FinalRateLimit = metrics.RateLimitUsage
 		outcome.Steps = append(outcome.Steps, StepExecutionLog{
 			Action:         fmt.Sprintf("UPLOAD_ALBUM_PHOTO_%d", idx+1),
@@ -489,12 +389,24 @@ func (c *Client) PublishReelByURL(ctx context.Context, pageID, token, descriptio
 		return outcome, errors.New("missing video_id in reel start response")
 	}
 
-	// Step 2: Request Meta to pull video binary from URL
-	headers := map[string]string{
-		"Authorization": "OAuth " + token,
-		"file_url":      videoURL,
+	// Hosted Reel uploads use the upload URL returned by Meta, not the Graph video node.
+	uploadURL, _ := startRes["upload_url"].(string)
+	parsed, parseErr := url.Parse(uploadURL)
+	if parseErr != nil || parsed.Scheme != "https" || parsed.Host != "rupload.facebook.com" || parsed.User != nil {
+		return outcome, errors.New("Meta returned an invalid Reel upload URL")
 	}
-	_, transferMetrics, err := c.PostJSON(ctx, videoID, map[string]any{}, headers)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, http.NoBody)
+	if err != nil {
+		return outcome, err
+	}
+	request.Header.Set("Authorization", "OAuth "+token)
+	request.Header.Set("file_url", videoURL)
+	uploadClient := *c.httpClient
+	uploadClient.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
+	uploadAdapter := *c
+	uploadAdapter.httpClient = &uploadClient
+	_, transferMetrics, err := uploadAdapter.doRequest(request, time.Now())
+
 	outcome.FinalRateLimit = transferMetrics.RateLimitUsage
 	outcome.Steps = append(outcome.Steps, StepExecutionLog{
 		Action:         "REEL_UPLOAD_TRANSFER",

@@ -203,7 +203,7 @@ func (p *Processor) ProcessPostByID(ctx context.Context, postID string) error {
 		}
 	}
 
-	if pubErr == nil && outcome != nil {
+	if pubErr == nil && outcome != nil && outcome.ExternalPostID != "" {
 		now := time.Now().UTC()
 		if err := p.store.MarkPostPublished(ctx, post.ID, outcome.ExternalPostID, now); err != nil {
 			return err

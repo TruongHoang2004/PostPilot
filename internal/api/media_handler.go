@@ -2,89 +2,47 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/TruongHoang2004/PostPilot/internal/domain"
 )
 
 // handleMediaUpload handles direct file uploads for images/videos and syncs to S3/MinIO (if configured).
 func (s *Server) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(50 << 20); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "file too large or invalid multipart form: " + err.Error()})
+	if s.s3 == nil || s.s3.Endpoint == "" {
+		writeJSON(w, 503, map[string]any{"error": "object storage is not configured"})
 		return
 	}
-
+	r.Body = http.MaxBytesReader(w, r.Body, 512<<20)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		writeJSON(w, 400, map[string]any{"error": "invalid upload or file exceeds 512 MiB"})
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "missing 'file' field in form: " + err.Error()})
+		writeJSON(w, 400, map[string]any{"error": "file is required"})
 		return
 	}
 	defer file.Close()
-
-	mimeType := header.Header.Get("Content-Type")
-	if mimeType == "" {
-		mimeType = "application/octet-stream"
+	mime := header.Header.Get("Content-Type")
+	if mime == "" {
+		mime = "application/octet-stream"
 	}
-
-	uploadDir := "./uploads"
-	_ = os.MkdirAll(uploadDir, 0755)
-	cleanName := fmt.Sprintf("%d_%s", time.Now().UnixMilli(), filepath.Base(strings.ReplaceAll(header.Filename, " ", "_")))
-	localPath := filepath.Join(uploadDir, cleanName)
-
-	dst, err := os.Create(localPath)
+	publicURL, key, err := s.s3.Upload(r.Context(), header.Filename, mime, file, header.Size)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "cannot save file locally: " + err.Error()})
+		s.logger.Error("Object storage upload failed", "error", err)
+		writeJSON(w, 502, map[string]any{"error": "object storage upload failed; no local fallback was used"})
 		return
 	}
-	writtenBytes, copyErr := io.Copy(dst, file)
-	_ = dst.Close()
-	if copyErr != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "cannot copy file: " + copyErr.Error()})
+	asset, err := s.store.CreateMediaAsset(r.Context(), &domain.MediaAsset{FileName: header.Filename, StorageKey: key, PublicURL: publicURL, MimeType: mime, FileSizeBytes: header.Size})
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": "file stored but metadata could not be saved; contact operator"})
 		return
 	}
-
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	publicURL := fmt.Sprintf("%s://%s/uploads/%s", scheme, r.Host, cleanName)
-	storageKey := "uploads/" + cleanName
-
-	if s.s3 != nil && s.s3.Endpoint != "" && !strings.Contains(s.s3.PublicBaseURL, "localhost") && !strings.Contains(s.s3.PublicBaseURL, "127.0.0.1") {
-		if localFile, openErr := os.Open(localPath); openErr == nil {
-			if pub, key, s3Err := s.s3.Upload(r.Context(), header.Filename, mimeType, localFile, writtenBytes); s3Err == nil {
-				publicURL = pub
-				storageKey = key
-			} else {
-				s.logger.Warn("S3 upload failed, using local storage URL", "error", s3Err)
-			}
-			_ = localFile.Close()
-		}
-	}
-
-	asset, _ := s.store.CreateMediaAsset(r.Context(), &domain.MediaAsset{
-		FileName:      header.Filename,
-		StorageKey:    storageKey,
-		PublicURL:     publicURL,
-		MimeType:      mimeType,
-		FileSizeBytes: writtenBytes,
-	})
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"message":     "Media uploaded successfully",
-		"public_url":  publicURL,
-		"storage_key": storageKey,
-		"file_name":   header.Filename,
-		"file_size":   writtenBytes,
-		"mime_type":   mimeType,
-		"media_asset": asset,
-	})
+	writeJSON(w, 200, map[string]any{"message": "Media uploaded successfully", "public_url": publicURL, "storage_key": key, "file_name": header.Filename, "file_size": header.Size, "mime_type": mime, "media_asset": asset})
 }
 
 // handlePresignUpload generates AWS Signature V4 presigned PUT URLs for direct client uploads.
@@ -110,13 +68,18 @@ func (s *Server) handlePresignUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	asset, _ := s.store.CreateMediaAsset(r.Context(), &domain.MediaAsset{
+	asset, err := s.store.CreateMediaAsset(r.Context(), &domain.MediaAsset{
 		FileName:      req.FileName,
 		StorageKey:    presigned.StorageKey,
 		PublicURL:     presigned.PublicURL,
 		MimeType:      req.MimeType,
 		FileSizeBytes: req.FileSizeBytes,
 	})
+
+	if err != nil {
+		writeJSON(w, 500, map[string]any{"error": "cannot save upload metadata"})
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"presigned":   presigned,

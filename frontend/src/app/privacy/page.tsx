@@ -22,6 +22,7 @@ export default function PrivacyPage() {
       <section aria-labelledby="data">
         <h2 id="data">2. Dữ liệu được xử lý</h2>
         <ul>
+          <li><strong>Tài khoản và workspace:</strong> email, tên, mật khẩu đã băm, workspace, membership và quyền trên nhóm Page. Token đăng nhập và workspace đang chọn được lưu trong trình duyệt để gửi yêu cầu xác thực. Khi kết nối Facebook, cookie bảo mật và state dùng một lần được sử dụng để xác minh trình duyệt khởi tạo.</li>
           <li><strong>Thông tin Page kết nối:</strong> mã Page, tên, danh mục và thông tin quyền truy cập được Meta trả về khi bạn cấp quyền.</li>
           <li><strong>Thông tin xác thực:</strong> access token dùng để thực hiện các thao tác với Page bạn kết nối. Token Page được mã hóa khi lưu trong cơ sở dữ liệu.</li>
           <li><strong>Nội dung bạn cung cấp:</strong> văn bản, liên kết, ảnh, video, lịch đăng và các thông tin bài viết liên quan.</li>

@@ -26,7 +26,7 @@ const (
 var ErrQueueEmpty = errors.New("redis queue empty timeout")
 
 // Client provides a Redis connection via standard RESP (Redis Serialization Protocol),
-// supporting an in-memory fallback for testing and development without a live Redis server.
+// with memory storage available only through the explicit NewInMemoryClient test constructor.
 type Client struct {
 	addr     string
 	password string

@@ -69,19 +69,19 @@ func (g *GeminiGenerator) GeneratePostContent(ctx context.Context, topic, tone s
 	rawBytes, _ := json.Marshal(reqPayload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(rawBytes))
 	if err != nil {
-		return "", g.model, err
+		return "", g.model, fmt.Errorf("Gemini request failed; check server configuration and connectivity")
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := g.httpClient.Do(req)
 	if err != nil {
-		return "", g.model, err
+		return "", g.model, fmt.Errorf("Gemini request failed; check server configuration and connectivity")
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
-		return "", g.model, fmt.Errorf("gemini api status %d: %s", resp.StatusCode, string(respBody))
+		return "", g.model, fmt.Errorf("Gemini returned HTTP %d; check server configuration and quota", resp.StatusCode)
 	}
 
 	var parsed struct {
@@ -94,7 +94,7 @@ func (g *GeminiGenerator) GeneratePostContent(ctx context.Context, topic, tone s
 		} `json:"candidates"`
 	}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", g.model, err
+		return "", g.model, fmt.Errorf("Gemini request failed; check server configuration and connectivity")
 	}
 
 	if len(parsed.Candidates) > 0 && len(parsed.Candidates[0].Content.Parts) > 0 {
